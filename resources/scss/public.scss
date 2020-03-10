@@ -1,0 +1,63 @@
+@import 'public/bootstrap';
+@import 'node_modules/font-awesome/scss/font-awesome';
+@import 'node_modules/@fancyapps/fancybox/dist/jquery.fancybox';
+@import 'public/errors';
+@import 'public/pagination';
+@import 'public/site-header';
+@import 'public/site-footer';
+@import 'public/menu-main';
+@import 'public/menu-social';
+@import 'public/menu-footer';
+@import 'public/swiper';
+@import 'public/offcanvas';
+@import 'public/gmaps';
+@import 'navbar';
+@import 'fancybox';
+@import 'public/navbar-hide-left-button';
+@import 'public/documents';
+@import 'public/images';
+
+.skip-to-content {
+    @include sr-only;
+    @include sr-only-focusable;
+    &:active,
+    &:focus {
+        position: absolute;
+    }
+}
+
+table {
+    @extend .table;
+}
+
+.site-container {
+    @extend .container;
+}
+
+blockquote {
+    color: $gray-700;
+    border-left: 5px solid $gray-300;
+    padding: 18px 25px 18px 22px;
+    background-color: $gray-100;
+    quotes: '\201C''\201D''\2018''\2019';
+    &:before {
+        color: #ccc;
+        content: open-quote;
+        font-size: 4em;
+        line-height: 0.1em;
+        vertical-align: -0.4em;
+        margin-left: -0.5rem;
+    }
+}
+
+.rich-content {
+    img {
+        @include img-fluid;
+        &[style*='float:left'] {
+            margin-right: 20px;
+        }
+        &[style*='float:right'] {
+            margin-left: 20px;
+        }
+    }
+}
