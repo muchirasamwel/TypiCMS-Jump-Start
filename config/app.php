@@ -193,7 +193,8 @@ return [
          * TypiCMS Core Service Provider...
          */
         TypiCMS\Modules\Core\Providers\ModuleProvider::class,
-
+        TypiCMS\Modules\Profiles\Providers\ModuleProvider::class,
+        TypiCMS\Modules\Contactuses\Providers\ModuleProvider::class,
         /*
          * Application Service Providers...
          */
@@ -209,6 +210,7 @@ return [
          * so it should stay at last...
          */
         TypiCMS\Modules\Pages\Providers\ModuleProvider::class,
+
 
     ],
 

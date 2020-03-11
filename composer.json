@@ -2,7 +2,12 @@
     "name": "typicms/base",
     "type": "project",
     "description": "A multilingual CMS built with Laravel",
-    "keywords": ["cms", "multilingual", "laravel", "typi"],
+    "keywords": [
+        "cms",
+        "multilingual",
+        "laravel",
+        "typi"
+    ],
     "license": "MIT",
     "authors": [
         {
@@ -23,6 +28,7 @@
     ],
     "require": {
         "php": "^7.2",
+        "ext-json": "*",
         "bkwld/croppa": "dev-master",
         "eluceo/ical": "^0.15.1",
         "fideloper/proxy": "^4.0",
@@ -48,8 +54,8 @@
         "typicms/laravel-translatable-bootforms": "~4.1",
         "typicms/menus": "~7.0",
         "typicms/nestablecollection": "~1.1.15",
+        "typicms/news": "^7.0",
         "typicms/objects": "~7.0",
-        "typicms/pages": "~7.0",
         "typicms/roles": "~7.0",
         "typicms/settings": "~7.0",
         "typicms/sitemap": "~7.0",

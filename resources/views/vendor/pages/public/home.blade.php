@@ -15,6 +15,16 @@
     @include('files::public._documents', ['model' => $page])
     @include('files::public._images', ['model' => $page])
 
+
+    <div class="row bg-primary p-3">
+        <div class="col-md-6">
+            Home is Where You live
+        </div>
+        <div class="col-md-6">
+            <img src="" alt="Image missing">
+        </div>
+    </div>
+
 {{--
     @if ($slides = Slides::published()->get() and $slides->count() > 0)
         @include('slides::public._slider', ['items' => $slides])
@@ -50,5 +60,4 @@
         </div>
     @endif
 --}}
-
 @endsection

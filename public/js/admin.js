@@ -123,6 +123,7 @@ module.exports = __webpack_require__(/*! ./lib/axios */ "./node_modules/axios/li
 var utils = __webpack_require__(/*! ./../utils */ "./node_modules/axios/lib/utils.js");
 var settle = __webpack_require__(/*! ./../core/settle */ "./node_modules/axios/lib/core/settle.js");
 var buildURL = __webpack_require__(/*! ./../helpers/buildURL */ "./node_modules/axios/lib/helpers/buildURL.js");
+var buildFullPath = __webpack_require__(/*! ../core/buildFullPath */ "./node_modules/axios/lib/core/buildFullPath.js");
 var parseHeaders = __webpack_require__(/*! ./../helpers/parseHeaders */ "./node_modules/axios/lib/helpers/parseHeaders.js");
 var isURLSameOrigin = __webpack_require__(/*! ./../helpers/isURLSameOrigin */ "./node_modules/axios/lib/helpers/isURLSameOrigin.js");
 var createError = __webpack_require__(/*! ../core/createError */ "./node_modules/axios/lib/core/createError.js");
@@ -145,7 +146,8 @@ module.exports = function xhrAdapter(config) {
       requestHeaders.Authorization = 'Basic ' + btoa(username + ':' + password);
     }
 
-    request.open(config.method.toUpperCase(), buildURL(config.url, config.params, config.paramsSerializer), true);
+    var fullPath = buildFullPath(config.baseURL, config.url);
+    request.open(config.method.toUpperCase(), buildURL(fullPath, config.params, config.paramsSerializer), true);
 
     // Set the request timeout in MS
     request.timeout = config.timeout;
@@ -206,7 +208,11 @@ module.exports = function xhrAdapter(config) {
 
     // Handle timeout
     request.ontimeout = function handleTimeout() {
-      reject(createError('timeout of ' + config.timeout + 'ms exceeded', config, 'ECONNABORTED',
+      var timeoutErrorMessage = 'timeout of ' + config.timeout + 'ms exceeded';
+      if (config.timeoutErrorMessage) {
+        timeoutErrorMessage = config.timeoutErrorMessage;
+      }
+      reject(createError(timeoutErrorMessage, config, 'ECONNABORTED',
         request));
 
       // Clean up request
@@ -220,7 +226,7 @@ module.exports = function xhrAdapter(config) {
       var cookies = __webpack_require__(/*! ./../helpers/cookies */ "./node_modules/axios/lib/helpers/cookies.js");
 
       // Add xsrf header
-      var xsrfValue = (config.withCredentials || isURLSameOrigin(config.url)) && config.xsrfCookieName ?
+      var xsrfValue = (config.withCredentials || isURLSameOrigin(fullPath)) && config.xsrfCookieName ?
         cookies.read(config.xsrfCookieName) :
         undefined;
 
@@ -243,8 +249,8 @@ module.exports = function xhrAdapter(config) {
     }
 
     // Add withCredentials to request if needed
-    if (config.withCredentials) {
-      request.withCredentials = true;
+    if (!utils.isUndefined(config.withCredentials)) {
+      request.withCredentials = !!config.withCredentials;
     }
 
     // Add responseType to request if needed
@@ -523,7 +529,15 @@ Axios.prototype.request = function request(config) {
   }
 
   config = mergeConfig(this.defaults, config);
-  config.method = config.method ? config.method.toLowerCase() : 'get';
+
+  // Set config.method
+  if (config.method) {
+    config.method = config.method.toLowerCase();
+  } else if (this.defaults.method) {
+    config.method = this.defaults.method.toLowerCase();
+  } else {
+    config.method = 'get';
+  }
 
   // Hook up interceptors middleware
   var chain = [dispatchRequest, undefined];
@@ -640,6 +654,38 @@ module.exports = InterceptorManager;
 
 /***/ }),
 
+/***/ "./node_modules/axios/lib/core/buildFullPath.js":
+/*!******************************************************!*\
+  !*** ./node_modules/axios/lib/core/buildFullPath.js ***!
+  \******************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var isAbsoluteURL = __webpack_require__(/*! ../helpers/isAbsoluteURL */ "./node_modules/axios/lib/helpers/isAbsoluteURL.js");
+var combineURLs = __webpack_require__(/*! ../helpers/combineURLs */ "./node_modules/axios/lib/helpers/combineURLs.js");
+
+/**
+ * Creates a new URL by combining the baseURL with the requestedURL,
+ * only when the requestedURL is not already an absolute URL.
+ * If the requestURL is absolute, this function returns the requestedURL untouched.
+ *
+ * @param {string} baseURL The base URL
+ * @param {string} requestedURL Absolute or relative URL to combine
+ * @returns {string} The combined full path
+ */
+module.exports = function buildFullPath(baseURL, requestedURL) {
+  if (baseURL && !isAbsoluteURL(requestedURL)) {
+    return combineURLs(baseURL, requestedURL);
+  }
+  return requestedURL;
+};
+
+
+/***/ }),
+
 /***/ "./node_modules/axios/lib/core/createError.js":
 /*!****************************************************!*\
   !*** ./node_modules/axios/lib/core/createError.js ***!
@@ -684,8 +730,6 @@ var utils = __webpack_require__(/*! ./../utils */ "./node_modules/axios/lib/util
 var transformData = __webpack_require__(/*! ./transformData */ "./node_modules/axios/lib/core/transformData.js");
 var isCancel = __webpack_require__(/*! ../cancel/isCancel */ "./node_modules/axios/lib/cancel/isCancel.js");
 var defaults = __webpack_require__(/*! ../defaults */ "./node_modules/axios/lib/defaults.js");
-var isAbsoluteURL = __webpack_require__(/*! ./../helpers/isAbsoluteURL */ "./node_modules/axios/lib/helpers/isAbsoluteURL.js");
-var combineURLs = __webpack_require__(/*! ./../helpers/combineURLs */ "./node_modules/axios/lib/helpers/combineURLs.js");
 
 /**
  * Throws a `Cancel` if cancellation has been requested.
@@ -705,11 +749,6 @@ function throwIfCancellationRequested(config) {
 module.exports = function dispatchRequest(config) {
   throwIfCancellationRequested(config);
 
-  // Support baseURL config
-  if (config.baseURL && !isAbsoluteURL(config.url)) {
-    config.url = combineURLs(config.baseURL, config.url);
-  }
-
   // Ensure headers exist
   config.headers = config.headers || {};
 
@@ -724,7 +763,7 @@ module.exports = function dispatchRequest(config) {
   config.headers = utils.merge(
     config.headers.common || {},
     config.headers[config.method] || {},
-    config.headers || {}
+    config.headers
   );
 
   utils.forEach(
@@ -847,13 +886,23 @@ module.exports = function mergeConfig(config1, config2) {
   config2 = config2 || {};
   var config = {};
 
-  utils.forEach(['url', 'method', 'params', 'data'], function valueFromConfig2(prop) {
+  var valueFromConfig2Keys = ['url', 'method', 'params', 'data'];
+  var mergeDeepPropertiesKeys = ['headers', 'auth', 'proxy'];
+  var defaultToConfig2Keys = [
+    'baseURL', 'url', 'transformRequest', 'transformResponse', 'paramsSerializer',
+    'timeout', 'withCredentials', 'adapter', 'responseType', 'xsrfCookieName',
+    'xsrfHeaderName', 'onUploadProgress', 'onDownloadProgress',
+    'maxContentLength', 'validateStatus', 'maxRedirects', 'httpAgent',
+    'httpsAgent', 'cancelToken', 'socketPath'
+  ];
+
+  utils.forEach(valueFromConfig2Keys, function valueFromConfig2(prop) {
     if (typeof config2[prop] !== 'undefined') {
       config[prop] = config2[prop];
     }
   });
 
-  utils.forEach(['headers', 'auth', 'proxy'], function mergeDeepProperties(prop) {
+  utils.forEach(mergeDeepPropertiesKeys, function mergeDeepProperties(prop) {
     if (utils.isObject(config2[prop])) {
       config[prop] = utils.deepMerge(config1[prop], config2[prop]);
     } else if (typeof config2[prop] !== 'undefined') {
@@ -865,13 +914,25 @@ module.exports = function mergeConfig(config1, config2) {
     }
   });
 
-  utils.forEach([
-    'baseURL', 'transformRequest', 'transformResponse', 'paramsSerializer',
-    'timeout', 'withCredentials', 'adapter', 'responseType', 'xsrfCookieName',
-    'xsrfHeaderName', 'onUploadProgress', 'onDownloadProgress', 'maxContentLength',
-    'validateStatus', 'maxRedirects', 'httpAgent', 'httpsAgent', 'cancelToken',
-    'socketPath'
-  ], function defaultToConfig2(prop) {
+  utils.forEach(defaultToConfig2Keys, function defaultToConfig2(prop) {
+    if (typeof config2[prop] !== 'undefined') {
+      config[prop] = config2[prop];
+    } else if (typeof config1[prop] !== 'undefined') {
+      config[prop] = config1[prop];
+    }
+  });
+
+  var axiosKeys = valueFromConfig2Keys
+    .concat(mergeDeepPropertiesKeys)
+    .concat(defaultToConfig2Keys);
+
+  var otherKeys = Object
+    .keys(config2)
+    .filter(function filterAxiosKeys(key) {
+      return axiosKeys.indexOf(key) === -1;
+    });
+
+  utils.forEach(otherKeys, function otherKeysDefaultToConfig2(prop) {
     if (typeof config2[prop] !== 'undefined') {
       config[prop] = config2[prop];
     } else if (typeof config1[prop] !== 'undefined') {
@@ -979,13 +1040,12 @@ function setContentTypeIfUnset(headers, value) {
 
 function getDefaultAdapter() {
   var adapter;
-  // Only Node.JS has a process variable that is of [[Class]] process
-  if (typeof process !== 'undefined' && Object.prototype.toString.call(process) === '[object process]') {
-    // For node use HTTP adapter
-    adapter = __webpack_require__(/*! ./adapters/http */ "./node_modules/axios/lib/adapters/xhr.js");
-  } else if (typeof XMLHttpRequest !== 'undefined') {
+  if (typeof XMLHttpRequest !== 'undefined') {
     // For browsers use XHR adapter
     adapter = __webpack_require__(/*! ./adapters/xhr */ "./node_modules/axios/lib/adapters/xhr.js");
+  } else if (typeof process !== 'undefined' && Object.prototype.toString.call(process) === '[object process]') {
+    // For node use HTTP adapter
+    adapter = __webpack_require__(/*! ./adapters/http */ "./node_modules/axios/lib/adapters/xhr.js");
   }
   return adapter;
 }
@@ -1507,7 +1567,6 @@ module.exports = function spread(callback) {
 
 
 var bind = __webpack_require__(/*! ./helpers/bind */ "./node_modules/axios/lib/helpers/bind.js");
-var isBuffer = __webpack_require__(/*! is-buffer */ "./node_modules/axios/node_modules/is-buffer/index.js");
 
 /*global toString:true*/
 
@@ -1523,6 +1582,27 @@ var toString = Object.prototype.toString;
  */
 function isArray(val) {
   return toString.call(val) === '[object Array]';
+}
+
+/**
+ * Determine if a value is undefined
+ *
+ * @param {Object} val The value to test
+ * @returns {boolean} True if the value is undefined, otherwise false
+ */
+function isUndefined(val) {
+  return typeof val === 'undefined';
+}
+
+/**
+ * Determine if a value is a Buffer
+ *
+ * @param {Object} val The value to test
+ * @returns {boolean} True if value is a Buffer, otherwise false
+ */
+function isBuffer(val) {
+  return val !== null && !isUndefined(val) && val.constructor !== null && !isUndefined(val.constructor)
+    && typeof val.constructor.isBuffer === 'function' && val.constructor.isBuffer(val);
 }
 
 /**
@@ -1579,16 +1659,6 @@ function isString(val) {
  */
 function isNumber(val) {
   return typeof val === 'number';
-}
-
-/**
- * Determine if a value is undefined
- *
- * @param {Object} val The value to test
- * @returns {boolean} True if the value is undefined, otherwise false
- */
-function isUndefined(val) {
-  return typeof val === 'undefined';
 }
 
 /**
@@ -1838,28 +1908,6 @@ module.exports = {
   extend: extend,
   trim: trim
 };
-
-
-/***/ }),
-
-/***/ "./node_modules/axios/node_modules/is-buffer/index.js":
-/*!************************************************************!*\
-  !*** ./node_modules/axios/node_modules/is-buffer/index.js ***!
-  \************************************************************/
-/*! no static exports found */
-/***/ (function(module, exports) {
-
-/*!
- * Determine if an object is a Buffer
- *
- * @author   Feross Aboukhadijeh <https://feross.org>
- * @license  MIT
- */
-
-module.exports = function isBuffer (obj) {
-  return obj != null && obj.constructor != null &&
-    typeof obj.constructor.isBuffer === 'function' && obj.constructor.isBuffer(obj)
-}
 
 
 /***/ }),
@@ -2399,7 +2447,7 @@ __webpack_require__.r(__webpack_exports__);
     newFolder: function newFolder(folderId) {
       var _this7 = this;
 
-      var name = window.prompt('What is the name of the new folder?');
+      var name = window.prompt(this.$i18n.t('Enter a name for the new folder.'));
 
       if (!name) {
         return;
@@ -2724,12 +2772,16 @@ __webpack_require__.r(__webpack_exports__);
 //
 //
 //
+//
 
 /* harmony default export */ __webpack_exports__["default"] = ({
   components: {
     draggable: vuedraggable__WEBPACK_IMPORTED_MODULE_0___default.a
   },
   props: {
+    label: {
+      type: String
+    },
     relatedTable: {
       type: String,
       required: true
@@ -3264,7 +3316,6 @@ __webpack_require__.r(__webpack_exports__);
     };
   },
   created: function created() {
-    this.$i18n.locale = window.TypiCMS.locale;
     this.fetchData();
   },
   mounted: function mounted() {
@@ -3662,22 +3713,6 @@ __webpack_require__.r(__webpack_exports__);
 //
 //
 //
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
 /* harmony default export */ __webpack_exports__["default"] = ({
   props: {
     name: {
@@ -3687,10 +3722,6 @@ __webpack_require__.r(__webpack_exports__);
     label: {
       type: String,
       "default": ''
-    },
-    filterable: {
-      type: Boolean,
-      "default": false
     },
     sortable: {
       type: Boolean,
@@ -4224,7 +4255,6 @@ __webpack_require__.r(__webpack_exports__);
     };
   },
   created: function created() {
-    this.$i18n.locale = window.TypiCMS.locale;
     this.fetchData();
   },
   computed: {
@@ -23301,7 +23331,7 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/**
 __webpack_require__.r(__webpack_exports__);
 /* WEBPACK VAR INJECTION */(function(global) {/**!
  * @fileOverview Kickass library to create and place poppers near their reference elements.
- * @version 1.16.0
+ * @version 1.16.1
  * @license
  * Copyright (c) 2016 Federico Zivolo and contributors
  *
@@ -23647,7 +23677,7 @@ function getBordersSize(styles, axis) {
   var sideA = axis === 'x' ? 'Left' : 'Top';
   var sideB = sideA === 'Left' ? 'Right' : 'Bottom';
 
-  return parseFloat(styles['border' + sideA + 'Width'], 10) + parseFloat(styles['border' + sideB + 'Width'], 10);
+  return parseFloat(styles['border' + sideA + 'Width']) + parseFloat(styles['border' + sideB + 'Width']);
 }
 
 function getSize(axis, body, html, computedStyle) {
@@ -23802,8 +23832,8 @@ function getOffsetRectRelativeToArbitraryNode(children, parent) {
   var scrollParent = getScrollParent(children);
 
   var styles = getStyleComputedProperty(parent);
-  var borderTopWidth = parseFloat(styles.borderTopWidth, 10);
-  var borderLeftWidth = parseFloat(styles.borderLeftWidth, 10);
+  var borderTopWidth = parseFloat(styles.borderTopWidth);
+  var borderLeftWidth = parseFloat(styles.borderLeftWidth);
 
   // In cases where the parent is fixed, we must ignore negative scroll in offset calc
   if (fixedPosition && isHTML) {
@@ -23824,8 +23854,8 @@ function getOffsetRectRelativeToArbitraryNode(children, parent) {
   // differently when margins are applied to it. The margins are included in
   // the box of the documentElement, in the other cases not.
   if (!isIE10 && isHTML) {
-    var marginTop = parseFloat(styles.marginTop, 10);
-    var marginLeft = parseFloat(styles.marginLeft, 10);
+    var marginTop = parseFloat(styles.marginTop);
+    var marginLeft = parseFloat(styles.marginLeft);
 
     offsets.top -= borderTopWidth - marginTop;
     offsets.bottom -= borderTopWidth - marginTop;
@@ -24764,8 +24794,8 @@ function arrow(data, options) {
   // Compute the sideValue using the updated popper offsets
   // take popper margin in account because we don't have this info available
   var css = getStyleComputedProperty(data.instance.popper);
-  var popperMarginSide = parseFloat(css['margin' + sideCapitalized], 10);
-  var popperBorderSide = parseFloat(css['border' + sideCapitalized + 'Width'], 10);
+  var popperMarginSide = parseFloat(css['margin' + sideCapitalized]);
+  var popperBorderSide = parseFloat(css['border' + sideCapitalized + 'Width']);
   var sideValue = center - data.offsets.popper[side] - popperMarginSide - popperBorderSide;
 
   // prevent arrowElement from being placed not contiguously to its popper
@@ -30111,7 +30141,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "Sortable", function() { return Sortable; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "Swap", function() { return SwapPlugin; });
 /**!
- * Sortable 1.10.1
+ * Sortable 1.10.2
  * @author	RubaXa   <trash@rubaxa.org>
  * @author	owenm    <owen23355@gmail.com>
  * @license MIT
@@ -30238,7 +30268,7 @@ function _nonIterableSpread() {
   throw new TypeError("Invalid attempt to spread non-iterable instance");
 }
 
-var version = "1.10.1";
+var version = "1.10.2";
 
 function userAgent(pattern) {
   if (typeof window !== 'undefined' && window.navigator) {
@@ -30372,7 +30402,7 @@ function matrix(el, selfOnly) {
     } while (!selfOnly && (el = el.parentNode));
   }
 
-  var matrixFn = window.DOMMatrix || window.WebKitCSSMatrix || window.CSSMatrix;
+  var matrixFn = window.DOMMatrix || window.WebKitCSSMatrix || window.CSSMatrix || window.MSCSSMatrix;
   /*jshint -W056 */
 
   return matrixFn && new matrixFn(appliedTransforms);
@@ -30397,10 +30427,12 @@ function find(ctx, tagName, iterator) {
 }
 
 function getWindowScrollingElement() {
-  if (IE11OrLess) {
-    return document.documentElement;
+  var scrollingElement = document.scrollingElement;
+
+  if (scrollingElement) {
+    return scrollingElement;
   } else {
-    return document.scrollingElement;
+    return document.documentElement;
   }
 }
 /**
@@ -31737,7 +31769,7 @@ Sortable.prototype =
           fallbackTolerance = options.fallbackTolerance,
           fallbackOffset = options.fallbackOffset,
           touch = evt.touches ? evt.touches[0] : evt,
-          ghostMatrix = ghostEl && matrix(ghostEl),
+          ghostMatrix = ghostEl && matrix(ghostEl, true),
           scaleX = ghostEl && ghostMatrix && ghostMatrix.a,
           scaleY = ghostEl && ghostMatrix && ghostMatrix.d,
           relativeScrollOffset = PositionGhostAbsolutely && ghostRelativeParent && getRelativeScrollOffset(ghostRelativeParent),
@@ -32242,6 +32274,8 @@ Sortable.prototype =
       css(document.body, 'user-select', '');
     }
 
+    css(dragEl, 'transform', '');
+
     if (evt) {
       if (moved) {
         evt.cancelable && evt.preventDefault();
@@ -32505,6 +32539,8 @@ Sortable.prototype =
     });
 
     this._onDrop();
+
+    this._disableDelayedDragEvents();
 
     sortables.splice(sortables.indexOf(this.el), 1);
     this.el = el = null;
@@ -33646,7 +33682,7 @@ function MultiDragPlugin() {
       off(document, 'keyup', this._checkKeyUp);
     },
     _deselectMultiDrag: function _deselectMultiDrag(evt) {
-      if (dragStarted) return; // Only deselect if selection is in this sortable
+      if (typeof dragStarted !== "undefined" && dragStarted) return; // Only deselect if selection is in this sortable
 
       if (multiDragSortable !== this.sortable) return; // Only deselect if target is not item in this sortable
 
@@ -33892,7 +33928,7 @@ exports.clearImmediate = (typeof self !== "undefined" && self.clearImmediate) ||
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /*!
- * vue-i18n v8.15.1 
+ * vue-i18n v8.15.3 
  * (c) 2019 kazuya kawaguchi
  * Released under the MIT License.
  */
@@ -33913,7 +33949,8 @@ var numberFormatKeys = [
   'minimumSignificantDigits',
   'maximumSignificantDigits',
   'localeMatcher',
-  'formatMatcher'
+  'formatMatcher',
+  'unit'
 ];
 
 /**
@@ -35559,7 +35596,7 @@ VueI18n.prototype.mergeLocaleMessage = function mergeLocaleMessage (locale, mess
     this._checkLocaleMessage(locale, this._warnHtmlInMessage, message);
     if (this._warnHtmlInMessage === 'error') { return }
   }
-  this._vm.$set(this._vm.messages, locale, merge(this._vm.messages[locale] || {}, message));
+  this._vm.$set(this._vm.messages, locale, merge({}, this._vm.messages[locale] || {}, message));
 };
 
 VueI18n.prototype.getDateTimeFormat = function getDateTimeFormat (locale) {
@@ -35829,7 +35866,7 @@ Object.defineProperty(VueI18n, 'availabilities', {
 });
 
 VueI18n.install = install;
-VueI18n.version = '8.15.1';
+VueI18n.version = '8.15.3';
 
 /* harmony default export */ __webpack_exports__["default"] = (VueI18n);
 
@@ -36371,8 +36408,11 @@ var render = function() {
   var _c = _vm._self._c || _h
   return _c("div", { staticClass: "mb-4" }, [
     _c("div", { staticClass: "form-group" }, [
-      _c("label", { attrs: { for: "" } }, [
-        _vm._v(_vm._s(_vm.$t("Files")) + "\n            "),
+      _c("label", [
+        _vm.label
+          ? _c("span", [_vm._v(_vm._s(_vm.label))])
+          : _c("span", [_vm._v(_vm._s(_vm.$t("Files")))]),
+        _vm._v(" "),
         _vm.relatedId === 0
           ? _c("small", { staticClass: "form-text text-muted" }, [
               _vm._v(_vm._s(_vm.$t("Save this item first, then add files.")))
@@ -37105,68 +37145,7 @@ var render = function() {
   var _h = _vm.$createElement
   var _c = _vm._self._c || _h
   return _c("th", { class: _vm.classes, on: { click: _vm.sort } }, [
-    _c("span", [_vm._v(_vm._s(_vm.label))]),
-    _vm._v(" "),
-    _vm.filterable
-      ? _c(
-          "form",
-          {
-            staticClass: "item-list-search-bar",
-            on: {
-              submit: function($event) {
-                $event.preventDefault()
-                return _vm.search($event)
-              }
-            }
-          },
-          [
-            _c("div", { staticClass: "input-group input-group-sm" }, [
-              _c("input", {
-                directives: [
-                  {
-                    name: "model",
-                    rawName: "v-model",
-                    value: _vm.string,
-                    expression: "string"
-                  }
-                ],
-                staticClass: "form-control",
-                attrs: {
-                  type: "text",
-                  placeholder: _vm.$t("Search"),
-                  "aria-label": _vm.$t("Search")
-                },
-                domProps: { value: _vm.string },
-                on: {
-                  input: function($event) {
-                    if ($event.target.composing) {
-                      return
-                    }
-                    _vm.string = $event.target.value
-                  }
-                }
-              }),
-              _vm._v(" "),
-              _c("div", { staticClass: "input-group-append" }, [
-                _c(
-                  "button",
-                  {
-                    staticClass: "btn btn-outline-secondary",
-                    attrs: { type: "submit" }
-                  },
-                  [
-                    _c("span", { staticClass: "fa fa-search fa-fw" }),
-                    _vm._v(" "),
-                    _c("span", { staticClass: "sr-only" }, [
-                      _vm._v(_vm._s(_vm.$t("Search")))
-                    ])
-                  ]
-                )
-              ])
-            ])
-          ]
-        )
-      : _vm._e()
+    _c("span", [_vm._v(_vm._s(_vm.label))])
   ])
 }
 var staticRenderFns = []
@@ -38019,7 +37998,7 @@ function normalizeComponent (
 
 "use strict";
 /* WEBPACK VAR INJECTION */(function(global, setImmediate) {/*!
- * Vue.js v2.6.10
+ * Vue.js v2.6.11
  * (c) 2014-2019 Evan You
  * Released under the MIT License.
  */
@@ -39985,7 +39964,7 @@ if (typeof Promise !== 'undefined' && isNative(Promise)) {
   isUsingMicroTask = true;
 } else if (typeof setImmediate !== 'undefined' && isNative(setImmediate)) {
   // Fallback to setImmediate.
-  // Techinically it leverages the (macro) task queue,
+  // Technically it leverages the (macro) task queue,
   // but it is still a better choice than setTimeout.
   timerFunc = function () {
     setImmediate(flushCallbacks);
@@ -40074,7 +40053,7 @@ var initProxy;
     warn(
       "Property \"" + key + "\" must be accessed with \"$data." + key + "\" because " +
       'properties starting with "$" or "_" are not proxied in the Vue instance to ' +
-      'prevent conflicts with Vue internals' +
+      'prevent conflicts with Vue internals. ' +
       'See: https://vuejs.org/v2/api/#data',
       target
     );
@@ -40934,7 +40913,7 @@ function bindDynamicKeys (baseObj, values) {
     if (typeof key === 'string' && key) {
       baseObj[values[i]] = values[i + 1];
     } else if (key !== '' && key !== null) {
-      // null is a speical value for explicitly removing a binding
+      // null is a special value for explicitly removing a binding
       warn(
         ("Invalid value for dynamic directive argument (expected string or null): " + key),
         this
@@ -41429,6 +41408,12 @@ function _createElement (
     ns = (context.$vnode && context.$vnode.ns) || config.getTagNamespace(tag);
     if (config.isReservedTag(tag)) {
       // platform built-in elements
+      if (isDef(data) && isDef(data.nativeOn)) {
+        warn(
+          ("The .native modifier for v-on is only valid on components but it was used on <" + tag + ">."),
+          context
+        );
+      }
       vnode = new VNode(
         config.parsePlatformTagName(tag), data, children,
         undefined, undefined, context
@@ -41554,7 +41539,7 @@ function renderMixin (Vue) {
     // render self
     var vnode;
     try {
-      // There's no need to maintain a stack becaues all render fns are called
+      // There's no need to maintain a stack because all render fns are called
       // separately from one another. Nested component's render fns are called
       // when parent component is patched.
       currentRenderingInstance = vm;
@@ -43453,7 +43438,7 @@ Object.defineProperty(Vue, 'FunctionalRenderContext', {
   value: FunctionalRenderContext
 });
 
-Vue.version = '2.6.10';
+Vue.version = '2.6.11';
 
 /*  */
 
@@ -44126,7 +44111,7 @@ function createPatchFunction (backend) {
     }
   }
 
-  function removeVnodes (parentElm, vnodes, startIdx, endIdx) {
+  function removeVnodes (vnodes, startIdx, endIdx) {
     for (; startIdx <= endIdx; ++startIdx) {
       var ch = vnodes[startIdx];
       if (isDef(ch)) {
@@ -44237,7 +44222,7 @@ function createPatchFunction (backend) {
       refElm = isUndef(newCh[newEndIdx + 1]) ? null : newCh[newEndIdx + 1].elm;
       addVnodes(parentElm, refElm, newCh, newStartIdx, newEndIdx, insertedVnodeQueue);
     } else if (newStartIdx > newEndIdx) {
-      removeVnodes(parentElm, oldCh, oldStartIdx, oldEndIdx);
+      removeVnodes(oldCh, oldStartIdx, oldEndIdx);
     }
   }
 
@@ -44329,7 +44314,7 @@ function createPatchFunction (backend) {
         if (isDef(oldVnode.text)) { nodeOps.setTextContent(elm, ''); }
         addVnodes(elm, null, ch, 0, ch.length - 1, insertedVnodeQueue);
       } else if (isDef(oldCh)) {
-        removeVnodes(elm, oldCh, 0, oldCh.length - 1);
+        removeVnodes(oldCh, 0, oldCh.length - 1);
       } else if (isDef(oldVnode.text)) {
         nodeOps.setTextContent(elm, '');
       }
@@ -44558,7 +44543,7 @@ function createPatchFunction (backend) {
 
         // destroy old node
         if (isDef(parentElm)) {
-          removeVnodes(parentElm, [oldVnode], 0, 0);
+          removeVnodes([oldVnode], 0, 0);
         } else if (isDef(oldVnode.tag)) {
           invokeDestroyHook(oldVnode);
         }
@@ -47264,7 +47249,7 @@ var startTagOpen = new RegExp(("^<" + qnameCapture));
 var startTagClose = /^\s*(\/?)>/;
 var endTag = new RegExp(("^<\\/" + qnameCapture + "[^>]*>"));
 var doctype = /^<!DOCTYPE [^>]+>/i;
-// #7298: escape - to avoid being pased as HTML comment when inlined in page
+// #7298: escape - to avoid being passed as HTML comment when inlined in page
 var comment = /^<!\--/;
 var conditionalComment = /^<!\[/;
 
@@ -47549,7 +47534,7 @@ function parseHTML (html, options) {
 /*  */
 
 var onRE = /^@|^v-on:/;
-var dirRE = /^v-|^@|^:/;
+var dirRE = /^v-|^@|^:|^#/;
 var forAliasRE = /([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/;
 var forIteratorRE = /,([^,\}\]]*)(?:,([^,\}\]]*))?$/;
 var stripParensRE = /^\(|\)$/g;
@@ -48173,7 +48158,7 @@ function processSlotContent (el) {
           if (el.parent && !maybeComponent(el.parent)) {
             warn$2(
               "<template v-slot> can only appear at the root level inside " +
-              "the receiving the component",
+              "the receiving component",
               el
             );
           }
@@ -48736,7 +48721,7 @@ function isDirectChildOfTemplateFor (node) {
 
 /*  */
 
-var fnExpRE = /^([\w$_]+|\([^)]*?\))\s*=>|^function\s*(?:[\w$]+)?\s*\(/;
+var fnExpRE = /^([\w$_]+|\([^)]*?\))\s*=>|^function(?:\s+[\w$]+)?\s*\(/;
 var fnInvokeRE = /\([^)]*?\);*$/;
 var simplePathRE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\['[^']*?']|\["[^"]*?"]|\[\d+]|\[[A-Za-z_$][\w$]*])*$/;
 
@@ -49505,6 +49490,8 @@ function checkNode (node, warn) {
           var range = node.rawAttrsMap[name];
           if (name === 'v-for') {
             checkFor(node, ("v-for=\"" + value + "\""), warn, range);
+          } else if (name === 'v-slot' || name[0] === '#') {
+            checkFunctionParameterExpression(value, (name + "=\"" + value + "\""), warn, range);
           } else if (onRE.test(name)) {
             checkEvent(value, (name + "=\"" + value + "\""), warn, range);
           } else {
@@ -49524,9 +49511,9 @@ function checkNode (node, warn) {
 }
 
 function checkEvent (exp, text, warn, range) {
-  var stipped = exp.replace(stripStringRE, '');
-  var keywordMatch = stipped.match(unaryOperatorsRE);
-  if (keywordMatch && stipped.charAt(keywordMatch.index - 1) !== '$') {
+  var stripped = exp.replace(stripStringRE, '');
+  var keywordMatch = stripped.match(unaryOperatorsRE);
+  if (keywordMatch && stripped.charAt(keywordMatch.index - 1) !== '$') {
     warn(
       "avoid using JavaScript unary operator as property name: " +
       "\"" + (keywordMatch[0]) + "\" in expression " + (text.trim()),
@@ -49578,6 +49565,19 @@ function checkExpression (exp, text, warn, range) {
         range
       );
     }
+  }
+}
+
+function checkFunctionParameterExpression (exp, text, warn, range) {
+  try {
+    new Function(exp, '');
+  } catch (e) {
+    warn(
+      "invalid function parameter expression: " + (e.message) + " in\n\n" +
+      "    " + exp + "\n\n" +
+      "  Raw expression: " + (text.trim()) + "\n",
+      range
+    );
   }
 }
 
@@ -53397,13 +53397,11 @@ var _lang_es_json__WEBPACK_IMPORTED_MODULE_5___namespace = /*#__PURE__*/__webpac
 /* harmony import */ var _components_Filepicker_vue__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(/*! ./components/Filepicker.vue */ "./resources/js/components/Filepicker.vue");
 /* harmony import */ var _components_Files_vue__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(/*! ./components/Files.vue */ "./resources/js/components/Files.vue");
 /* harmony import */ var _components_FileField_vue__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(/*! ./components/FileField.vue */ "./resources/js/components/FileField.vue");
-// window._ = require('lodash');
-window.Popper = __webpack_require__(/*! popper.js */ "./node_modules/popper.js/dist/esm/popper.js")["default"];
 /**
  * jQuery and the Bootstrap jQuery plugin
  */
-
 try {
+  window.Popper = __webpack_require__(/*! popper.js */ "./node_modules/popper.js/dist/esm/popper.js")["default"];
   window.$ = window.jQuery = __webpack_require__(/*! jquery */ "./node_modules/jquery/dist/jquery.js");
 
   __webpack_require__(/*! bootstrap */ "./node_modules/bootstrap/dist/js/bootstrap.js");
@@ -53453,7 +53451,7 @@ var messages = {
   es: _lang_es_json__WEBPACK_IMPORTED_MODULE_5__
 };
 var i18n = new vue_i18n__WEBPACK_IMPORTED_MODULE_2__["default"]({
-  locale: 'en',
+  locale: window.TypiCMS.locale,
   messages: messages
 });
 /**
@@ -55442,7 +55440,7 @@ __webpack_require__.r(__webpack_exports__);
 /*! exports provided: # blocks, # categories, # contacts, # events, # files could not be moved., # files moved., # items deleted, # items published, # items selected, # items unpublished, # menus, # news, # pages, # partners, # places, # projects, # roles, # sections, # slides, # tags, # translations, # users, Are you sure you want to delete # items?, Are you sure you want to delete “{title}”?, Are you sure you want to publish # items?, Are you sure you want to unpublish # items?, default */
 /***/ (function(module) {
 
-module.exports = JSON.parse("{\"# blocks\":\"no blocks | 1 block | {count} blocks\",\"# categories\":\"No categories | 1 categorie | {count} categories\",\"# contacts\":\"no contacts | 1 contact | {count} contacts\",\"# events\":\"no events | 1 event | {count} events\",\"# files could not be moved.\":\"No files could be moved. | 1 file could not be moved. | {count} files could not be moved.\",\"# files moved.\":\"No files moved. | 1 file moved. | {count} files moved.\",\"# items deleted\":\"1 item deleted | {count} items deleted\",\"# items published\":\"1 item published | {count} items published\",\"# items selected\":\"no items selected | 1 item selected | {count} items selected\",\"# items unpublished\":\"1 item unpublished | {count} items unpublished\",\"# menus\":\"no menus | 1 menu | {count} menus\",\"# news\":\"No news | 1 news | {count} news\",\"# pages\":\"No pages | 1 page | {count} pages\",\"# partners\":\"no partners | 1 partner | {count} partners\",\"# places\":\"No addresses | 1 address | {count} addresses\",\"# projects\":\"no projects | 1 project | {count} projects\",\"# roles\":\"no roles | 1 role | {count} roles\",\"# sections\":\"No sections | 1 section | {count} sections\",\"# slides\":\"no slides | 1 slide | {count} slides\",\"# tags\":\"no tags | 1 tag | {count} tags\",\"# translations\":\"No translations | 1 translation | {count} translations\",\"# users\":\"no users | 1 user | {count} users\",\"Are you sure you want to delete # items?\":\"Are you sure you want to delete {count} item? | Are you sure you want to delete {count} items?\",\"Are you sure you want to delete “{title}”?\":\"Are you sure you want to delete “{title}”?\",\"Are you sure you want to publish # items?\":\"Are you sure you want to publish 1 item? | Are you sure you want to publish {count} items?\",\"Are you sure you want to unpublish # items?\":\"Are you sure you want to unpublish 1 item? | Are you sure you want to unpublish {count} items?\"}");
+module.exports = JSON.parse("{\"# blocks\":\"no blocks | 1 block | {count} blocks\",\"# categories\":\"No categories | 1 category | {count} categories\",\"# contacts\":\"no contacts | 1 contact | {count} contacts\",\"# events\":\"no events | 1 event | {count} events\",\"# files could not be moved.\":\"No files could be moved. | 1 file could not be moved. | {count} files could not be moved.\",\"# files moved.\":\"No files moved. | 1 file moved. | {count} files moved.\",\"# items deleted\":\"1 item deleted | {count} items deleted\",\"# items published\":\"1 item published | {count} items published\",\"# items selected\":\"no items selected | 1 item selected | {count} items selected\",\"# items unpublished\":\"1 item unpublished | {count} items unpublished\",\"# menus\":\"no menus | 1 menu | {count} menus\",\"# news\":\"No news | 1 news | {count} news\",\"# pages\":\"No pages | 1 page | {count} pages\",\"# partners\":\"no partners | 1 partner | {count} partners\",\"# places\":\"No addresses | 1 address | {count} addresses\",\"# projects\":\"no projects | 1 project | {count} projects\",\"# roles\":\"no roles | 1 role | {count} roles\",\"# sections\":\"No sections | 1 section | {count} sections\",\"# slides\":\"no slides | 1 slide | {count} slides\",\"# tags\":\"no tags | 1 tag | {count} tags\",\"# translations\":\"No translations | 1 translation | {count} translations\",\"# users\":\"no users | 1 user | {count} users\",\"Are you sure you want to delete # items?\":\"Are you sure you want to delete {count} item? | Are you sure you want to delete {count} items?\",\"Are you sure you want to delete “{title}”?\":\"Are you sure you want to delete “{title}”?\",\"Are you sure you want to publish # items?\":\"Are you sure you want to publish 1 item? | Are you sure you want to publish {count} items?\",\"Are you sure you want to unpublish # items?\":\"Are you sure you want to unpublish 1 item? | Are you sure you want to unpublish {count} items?\"}");
 
 /***/ }),
 
@@ -55450,11 +55448,11 @@ module.exports = JSON.parse("{\"# blocks\":\"no blocks | 1 block | {count} block
 /*!********************************!*\
   !*** ./resources/lang/es.json ***!
   \********************************/
-/*! exports provided: # blocks, # categories, # contacts, # events, # files could not be moved., # files moved., # items deleted, # items published, # items selected, # items unpublished, # menus, # news, # pages, # partners, # places, # projects, # roles, # sections, # slides, # tags, # translations, # users, A fresh verification link has been sent to your email address., A non-empty folder cannot be deleted., A page containing subpages cannot be linked to a module, Access dashboard, Action, Activate my account, Activated, Active locale, Active tab, Add files, Add selected file, Add selected files, Add to menu, Add, address, Address, Administration Language, Administration Welcome Message, Age, All languages, All rights reserved., All, Alt attribute, An error occurred with the data fetch., and get access to all the content of our website., Are you sure you want to delete # items?, Are you sure you want to delete “{title}”?, Are you sure you want to publish # items?, Are you sure you want to unpublish # items?, Authenticate to view website, Available, Back to the website, Back, Back-office, Become a member, Before proceeding, please check your email for a verification link., Blocks, Body, Cache cleared, Cache, Cancel, Categories, Category, Change Password, Change settings, City, Class, Clear cache, Clear, click here to request another, Comments enabled, Company, Confirm Password, Contact information, Contacts, Content blocks, Content, Copied to the clipboard, Copy, Country, Create, Created at, Css, Currency, Dashboard, Date, Day, DDMMYYYY HHMM, DDMMYYYY, Delete, Description, Deselect all, Destroy, Disabled, Do you want to clear history?, Document, Download count, Drop files to upload, Drop to upload., E-Mail Address, Edit block, Edit event, Edit file, Edit menu, Edit menulink, Edit news, Edit object, Edit page, Edit partner, Edit place, Edit project, Edit role, Edit slide, Edit tag, Edit translation, Edit, Email, Empty history, En ligne/Hors ligne, Enabled, End date, End time, Enter a name for the new folder., Environment, Error, Events, Excerpt, Exit, Extension, Fax, File information, File, Filename, Files, Filter, Find nearest, First name, Forbidden, Forgot your password?, Forgot Your Password?, from, Front office, Gender, Generate, Go Home, Google Analytics Tracking Id, Groups, Height, Hello!, HH:MM, hi, History is empty., Home, Homepage, Hour, Icon class, If you did not create an account, no further action is required., If you did not receive the email, If you did not request a password reset, no further action is required., If you’re having trouble clicking the ":actionText" button, copy and paste the URL below
-into your web browser: [:actionURL](:actionURL), Image, Images, Impossible to delete more than # items in one go., Index, Info, Insert, Is home, Item is published., Item is unpublished., Js, KB, Key, Keywords, Lang Chooser, Language, Last name, Latest changes, Latitude, List, Loading…, Locales, Location, Login, Logo, Logout, Longitude, Mandatory fields, Max :size MB, Max, MB, Media, Menu, Menulink, Menulinks, Menus, Message, Meta description, Meta keywords, Meta title, Meta, Mimetype, Minute, Mobile, Modify, Module name, Module, Month, Move to parent folder, Mr, Mrs, Name, New block, New contact request from, New contact request, New contact, New event, New file, New folder, New menu, New menulink, New news, New object, New page section, New page, New partner, New password, New place, New project category, New project, New role, New slide, New tab, New tag, New translation, New user, News feed, News, Next, No default page found, No file, No menu found with name “:name”, No, None, Not a member?, Not found, Nothing found., Objects, Offline, Oh no, on, Online, Options, Page Expired, Page Not Found, Page sections, Page, Pages, Partners, Password confirmation, Password, Past events, Path, per page, Permissions, Phone, Places, Please click the button below to verify your email address., Position, Postcode, Preview, Previous, Price, Private, Profile, Project categories, Projects, Publish website, Publish, Published items, Published on, Published, Read more, Redirect to first child, Regards, Register, Registration allowed, Remember Me, Replace file, Replace image, Replace, Reset Password Notification, Reset Password, Reset, Restricted to, Role permissions, Roles, Save and exit, Save this item first, then add files., Save this page first, then add sections., Save, Search, Second, Sections, See history, See navbar, See settings, Select all, Send password reset link, Send Password Reset Link, Send, Service Unavailable, Settings, Show categories, Show on map, Side, Size (px), Size, Slides, Slug, Sorry, an error occurred., Sorry, the page you are looking for could not be found., Sorry, we are doing some maintenance. Please check back soon., Sorry, you are forbidden from accessing this page., Sorry, you are making too many requests to our servers., Sorry, you are not authorized to access this page., Sorry, your session has expired. Please refresh and try again., Sort, Start date, Start time, Status, Store, Submit, Summary, Superuser, System info, System locales, Tag, Tags, Target, Template, Thank you for your contact request., The form contains errors:, The password is incorrect., This action is unauthorized., This item cannot be deleted because it has children., This password reset link will expire in :count minutes., This user is not activated., This user was not found., Time, Title, to, Toggle navigation, Too Many Requests, Translation, Translations, Type, Unauthorized, Unpublish, Unpublished items, Unpublished, Upcoming events, Update, Upload files, Uri, Url, User permissions, User, Username, Users and roles, Users, Uses, Venue, Verify Email Address, Verify Your Email Address, View list, View online, View website, View, Webmaster Email, Website baseline, Website title, Website, Welcome, :name!, Whoops!, Whoops, something went wrong on our servers., Width, Year, Yes, You are receiving this email because we received a password reset request for your account., Your account has been activated, you can now log in, Your account has been created, check your email for the verification link., Your account has been created, now you need to verify it., Your email address has been verified., default */
+/*! exports provided: # blocks, # categories, # contacts, # contactuses, # events, # files could not be moved., # files moved., # items deleted, # items published, # items selected, # items unpublished, # menus, # news, # pages, # pagesses, # partners, # places, # profiles, # projects, # roles, # sections, # slides, # tags, # translations, # users, A fresh verification link has been sent to your email address., A non-empty folder cannot be deleted., A page containing subpages cannot be linked to a module, Access dashboard, Action, Activate my account, Activated, Active locale, Active tab, Add, Add files, Add selected file, Add selected files, Add to menu, address, Address, Administration Language, Administration Welcome Message, Age, All, All languages, All rights reserved., Alt attribute, An error occurred with the data fetch., and get access to all the content of our website., Are you sure you want to delete # items?, Are you sure you want to delete “{title}”?, Are you sure you want to publish # items?, Are you sure you want to unpublish # items?, Authenticate to view website, Available, Back, Back to contactuses list, Back to pagesses list, Back to profiles list, Back to the website, Back-office, Become a member, Before proceeding, please check your email for a verification link., Blocks, Body, Cache, Cache cleared, Cancel, Categories, Category, Change Password, Change settings, City, Class, Clear, Clear cache, click here to request another, Comments enabled, Company, Confirm Password, Contact information, Contacts, Contactuses, Content, Content blocks, Copied to the clipboard, Copy, Country, Create, Created at, Css, Currency, Dashboard, Date, Day, DDMMYYYY, DDMMYYYY HHMM, Delete, Description, Deselect all, Destroy, Disabled, Do you want to clear history?, Document, Download count, Drop files to upload, Drop to upload., E-Mail Address, Edit, Edit block, Edit contactus, Edit event, Edit file, Edit menu, Edit menulink, Edit news, Edit object, Edit page, Edit pagess, Edit partner, Edit place, Edit profile, Edit project, Edit role, Edit slide, Edit tag, Edit translation, Email, Empty history, Enabled, End date, End time, Enter a name for the new folder., Environment, Error, Events, Excerpt, Exit, Extension, Fax, File, File information, Filename, Files, Filter, Find nearest, First name, Forbidden, Forgot your password?, Forgot Your Password?, from, Front office, Gender, Generate, Go Home, Google Analytics Tracking Id, Groups, Height, Hello!, HH:MM, hi, History is empty., Home, Homepage, Hour, Icon class, If you did not create an account, no further action is required., If you did not receive the email, If you did not request a password reset, no further action is required., If you’re having trouble clicking the ":actionText" button, copy and paste the URL below
+into your web browser: [:actionURL](:actionURL), Image, Images, Impossible to delete more than # items in one go., Index, Info, Insert, Is home, Item is published., Item is unpublished., Js, KB, Key, Keywords, Lang Chooser, Language, Last name, Latest changes, Latitude, List, Loading…, Locales, Location, Login, Logo, Logout, Longitude, Mandatory fields, Max, Max :size MB, MB, Media, Menu, Menulink, Menulinks, Menus, Message, Meta, Meta description, Meta keywords, Meta title, Mimetype, Minute, Mobile, Modify, Module, Module name, Month, Move to parent folder, Mr, Mrs, Name, New block, New contact, New contact request, New contact request from, New contactus, New event, New file, New folder, New menu, New menulink, New news, New object, New page, New page section, New pagess, New partner, New password, New place, New profile, New project, New project category, New role, New slide, New tab, New tag, New translation, New user, News, News feed, Next, No, No default page found, No file, No menu found with name “:name”, None, Not a member?, Not found, Nothing found., Objects, Offline, Oh no, on, Online, Options, Page, Page Expired, Page Not Found, Page sections, Pages, Pagesses, Partners, Password, Password confirmation, Past events, Path, per page, Permissions, Phone, Places, Please click the button below to verify your email address., Position, Postcode, Preview, Previous, Price, Private, Profile, Profiles, Project categories, Projects, Publish, Publish website, Published, Published items, Published on, Read more, Redirect to first child, Regards, Register, Registration allowed, Remember Me, Replace, Replace file, Replace image, Reset, Reset Password, Reset Password Notification, Restricted to, Role permissions, Roles, Save, Save and exit, Save this item first, then add files., Save this page first, then add sections., Search, Second, Sections, See history, See navbar, See settings, Select all, Send, Send Password Reset Link, Send password reset link, Service Unavailable, Settings, Show categories, Show on map, Side, Size, Size (px), Slides, Slug, Sorry, an error occurred., Sorry, the page you are looking for could not be found., Sorry, we are doing some maintenance. Please check back soon., Sorry, you are forbidden from accessing this page., Sorry, you are making too many requests to our servers., Sorry, you are not authorized to access this page., Sorry, your session has expired. Please refresh and try again., Sort, Start date, Start time, Status, Store, Submit, Summary, Superuser, System info, System locales, Tag, Tags, Target, Template, Thank you for your contact request., The form contains errors:, The password is incorrect., This action is unauthorized., This item cannot be deleted because it has children., This password reset link will expire in :count minutes., This user is not activated., This user was not found., Time, Title, to, Toggle navigation, Too Many Requests, Translation, Translations, Type, Unauthorized, Unpublish, Unpublished, Unpublished items, Upcoming events, Update, Upload files, Uri, Url, User, User permissions, Username, Users, Users and roles, Uses, Venue, Verify Email Address, Verify Your Email Address, View, View list, View online, View website, Webmaster Email, Website, Website baseline, Website title, Welcome, :name!, Whoops!, Whoops, something went wrong on our servers., Width, Year, Yes, You are receiving this email because we received a password reset request for your account., Your account has been activated, you can now log in, Your account has been created, check your email for the verification link., Your account has been created, now you need to verify it., Your email address has been verified., default */
 /***/ (function(module) {
 
-module.exports = JSON.parse("{\"# blocks\":\"Ningún bloque | 1 bloque | {count} bloques\",\"# categories\":\"Ningún categoría | 1 categoría | {count} categorías\",\"# contacts\":\"Ningún contacto | 1 contacto | {count} contactos\",\"# events\":\"Ningún evento | 1 evento | {count} eventos\",\"# files could not be moved.\":\"No se han podido mover archivos. | 1 archivo no se ha podido mover. | {count} archivos no se han podido mover.\",\"# files moved.\":\"No se han movido archivos. | 1 archivo movido. | {count} archivos movidos.\",\"# items deleted\":\"1 elemento eliminado | {count} elementos eliminados\",\"# items published\":\"1 elemento publicado | {count} elementos publicados\",\"# items selected\":\"Ningún elemento seleccionado | 1 elemento seleccionado | {count} elementos seleccionados\",\"# items unpublished\":\"1 elemento no publicado | {count} elementos no publicados\",\"# menus\":\"Ningún menú | 1 menú | {count} menús\",\"# news\":\"Ningún noticia | 1 noticia | {count} noticias\",\"# pages\":\"Ningún página | 1 página | {count} páginas\",\"# partners\":\"Ningún socio | 1 socio | {count} socios\",\"# places\":\"Ningún lugar | 1 lugar | {count} lugares\",\"# projects\":\"Ningún proyecto | 1 proyecto | {count} proyectos\",\"# roles\":\"Ningún rol | 1 rol | {count} roles\",\"# sections\":\"Ningún sección | 1 sección | {count} secciónes\",\"# slides\":\"Ningún slide | 1 slide | {count} slides\",\"# tags\":\"Ningún tag | 1 tag | {count} tags\",\"# translations\":\"Ningún traducción | 1 traducción | {count} traducciónes\",\"# users\":\"Ningún usuario | 1 usuario | {count} usuarios\",\"A fresh verification link has been sent to your email address.\":\"Se ha enviado un nuevo enlace de verificación a su correo electrónico.\",\"A non-empty folder cannot be deleted.\":\"Una carpeta no vacía no puede ser eliminada.\",\"A page containing subpages cannot be linked to a module\":\"Una página con subpáginas no puede estar relacionada con un módulo.\",\"Access dashboard\":\"Tablero de control\",\"Action\":\"Acción\",\"Activate my account\":\"Activar mi cuenta\",\"Activated\":\"Activado\",\"Active locale\":\"Idioma activo\",\"Active tab\":\"Pestaña activa\",\"Add files\":\"Añadir archivos\",\"Add selected file\":\"Añadir el archivo seleccionado\",\"Add selected files\":\"Añadir archivos seleccionados\",\"Add to menu\":\"Añadir al menú\",\"Add\":\"Añadir\",\"address\":\"direccion\",\"Address\":\"Dirección\",\"Administration Language\":\"Idioma de la administración\",\"Administration Welcome Message\":\"Administration welcome message\",\"Age\":\"Edad\",\"All languages\":\"Todos los idiomas\",\"All rights reserved.\":\"Todos los derechos reservados.\",\"All\":\"Todos\",\"Alt attribute\":\"Alt attribute\",\"An error occurred with the data fetch.\":\"Se produjo un error durante la carga de datos.\",\"and get access to all the content of our website.\":\"y acceder a todo el contenido de nuestro sitio web.\",\"Are you sure you want to delete # items?\":\"¿Seguro que quieres eliminar {count} elemento? | ¿Seguro que quieres eliminar {count} elementos?\",\"Are you sure you want to delete “{title}”?\":\"¿Estás seguro de que quieres eliminar «{title}»?\",\"Are you sure you want to publish # items?\":\"¿Seguro que quieres publicar 1 elemento? | ¿Seguro que quieres publicar {count} elementos?\",\"Are you sure you want to unpublish # items?\":\"¿Seguro que quieres anular la publicación de 1 elemento? | ¿Seguro que quieres anular la publicación de {count} elementos?\",\"Authenticate to view website\":\"Autenticarse para ver la web\",\"Available\":\"Disponible\",\"Back to the website\":\"Volver a la página web\",\"Back\":\"Volver\",\"Back-office\":\"Administración\",\"Become a member\":\"Hágase miembro\",\"Before proceeding, please check your email for a verification link.\":\"Antes de continuar, por favor, confirme su correo electrónico con el enlace de verificación que le fue enviado.\",\"Blocks\":\"Bloques\",\"Body\":\"Contenido principal\",\"Cache cleared\":\"Cache vaciada\",\"Cache\":\"Cache\",\"Cancel\":\"Cancelar\",\"Categories\":\"Categorías\",\"Category\":\"Categoría\",\"Change Password\":\"Cambiar contraseña\",\"Change settings\":\"Configuración\",\"City\":\"Ciudad\",\"Class\":\"Clase\",\"Clear cache\":\"Vaciar cache\",\"Clear\":\"Limpiar historial\",\"click here to request another\":\"haga clic aquí para solicitar otro\",\"Comments enabled\":\"Comentarios habilitados\",\"Company\":\"Empresa\",\"Confirm Password\":\"Confirmar contraseña\",\"Contact information\":\"Contacto\",\"Contacts\":\"Contactos\",\"Content blocks\":\"Bloques\",\"Content\":\"Contenido\",\"Copied to the clipboard\":\"Copiado al portapapeles\",\"Copy\":\"Copiar\",\"Country\":\"País\",\"Create\":\"Crear\",\"Created at\":\"Creado el\",\"Css\":\"CSS\",\"Currency\":\"Moneda\",\"Dashboard\":\"Tablero de control\",\"Date\":\"Fecha\",\"Day\":\"Día\",\"DDMMYYYY HHMM\":\"DD.MM.YYYY HH:MM\",\"DDMMYYYY\":\"DD.MM.YYYY\",\"Delete\":\"Borrar\",\"Description\":\"Descripción\",\"Deselect all\":\"Deseleccionar todo\",\"Destroy\":\"Borrar\",\"Disabled\":\"Discapacitado\",\"Do you want to clear history?\":\"¿Quieres borrar la historia?\",\"Document\":\"Documento\",\"Download count\":\"Número de descargas\",\"Drop files to upload\":\"Soltar archivos para subir\",\"Drop to upload.\":\"Soltar para subir.\",\"E-Mail Address\":\"Correo electrónico\",\"Edit block\":\"Editar el bloque\",\"Edit event\":\"Editar evento\",\"Edit file\":\"Editar archivo\",\"Edit menu\":\"Editar menú\",\"Edit menulink\":\"Editar enlace del menú\",\"Edit news\":\"Editar noticia\",\"Edit object\":\"Editar objeto\",\"Edit page\":\"Editar página\",\"Edit partner\":\"Editar socio\",\"Edit place\":\"Editar lugar\",\"Edit project\":\"Editar proyecto\",\"Edit role\":\"Editar rol\",\"Edit slide\":\"Editar slide\",\"Edit tag\":\"Editar tag\",\"Edit translation\":\"Editar traducción\",\"Edit\":\"Editar\",\"Email\":\"Email\",\"Empty history\":\"Limpiar historial\",\"En ligne/Hors ligne\":\"En línea/Fuera de línea\",\"Enabled\":\"Activado\",\"End date\":\"Fecha de finalización\",\"End time\":\"Hora de finalización\",\"Enter a name for the new folder.\":\"Ingrese un nombre para la nueva carpeta.\",\"Environment\":\"Entorno\",\"Error\":\"Error \",\"Events\":\"Eventos\",\"Excerpt\":\"Extracto\",\"Exit\":\"Salir\",\"Extension\":\"Extensión\",\"Fax\":\"Fax\",\"File information\":\"Información del archivo\",\"File\":\"Archivo\",\"Filename\":\"Nombre de archivo\",\"Files\":\"Archivos\",\"Filter\":\"Filtrar\",\"Find nearest\":\"Encontrar dirección más cercana\",\"First name\":\"Nombre\",\"Forbidden\":\"Prohibido\",\"Forgot your password?\":\"¿Olvidaste tu contraseña?\",\"Forgot Your Password?\":\"¿Olvidó su contraseña?\",\"from\":\"desde\",\"Front office\":\"Front office\",\"Gender\":\"Género\",\"Generate\":\"Generar\",\"Go Home\":\"Ir a inicio\",\"Google Analytics Tracking Id\":\"Google Analytics Tracking Id\",\"Groups\":\"Grupos\",\"Height\":\"Altura\",\"Hello!\":\"¡Hola!\",\"HH:MM\":\"HH:MM\",\"hi\":\"hola\",\"History is empty.\":\"La historia está vacía.\",\"Home\":\"Inicio\",\"Homepage\":\"En página de inicio\",\"Hour\":\"Hora\",\"Icon class\":\"Clase de icono\",\"If you did not create an account, no further action is required.\":\"Si no ha creado una cuenta, no se requiere ninguna acción adicional.\",\"If you did not receive the email\":\"Si no ha recibido el correo electrónico\",\"If you did not request a password reset, no further action is required.\":\"Si no solicitó un restablecimiento de contraseña, no se requieren más acciones.\",\"If you’re having trouble clicking the \\\":actionText\\\" button, copy and paste the URL below\\ninto your web browser: [:actionURL](:actionURL)\":\"Si tiene problemas para hacer clic en el botón \\\":actionText\\\", copie y pegue la siguiente URL \\nen su navegador web: [:actionURL](:actionURL)\",\"Image\":\"Imagen\",\"Images\":\"Imágenes\",\"Impossible to delete more than # items in one go.\":\"No se pueden eliminar más de {deleteLimit} elementos de una vez.\",\"Index\":\"Listar\",\"Info\":\"Información\",\"Insert\":\"Insertar\",\"Is home\":\"Es inicio\",\"Item is published.\":\"El elemento está publicado.\",\"Item is unpublished.\":\"El elemento no está publicado.\",\"Js\":\"JavaScript\",\"KB\":\"KB\",\"Key\":\"Clave\",\"Keywords\":\"Palabras clave\",\"Lang Chooser\":\"Selector de idioma\",\"Language\":\"Idioma\",\"Last name\":\"Apellidos\",\"Latest changes\":\"Últimos cambios\",\"Latitude\":\"Latitud\",\"List\":\"Listado\",\"Loading…\":\"Cargando…\",\"Locales\":\"Idiomas\",\"Location\":\"Ubicación\",\"Login\":\"Entrar\",\"Logo\":\"Logo\",\"Logout\":\"Salir\",\"Longitude\":\"Longitud\",\"Mandatory fields\":\"Campos obligatorios\",\"Max :size MB\":\"Máximo :size MB\",\"Max\":\"Máximo\",\"MB\":\"MB\",\"Media\":\"Media\",\"Menu\":\"Menú\",\"Menulink\":\"Enlace de menú\",\"Menulinks\":\"Enlaces de menú\",\"Menus\":\"Menús\",\"Message\":\"Mensaje\",\"Meta description\":\"Meta description\",\"Meta keywords\":\"Meta keywords\",\"Meta title\":\"Meta title\",\"Meta\":\"Meta\",\"Mimetype\":\"Tipo Mime\",\"Minute\":\"Minuto\",\"Mobile\":\"Móvil\",\"Modify\":\"Modicar\",\"Module name\":\"Nombre del módulo\",\"Module\":\"Módulo\",\"Month\":\"Mes\",\"Move to parent folder\":\"Mover a la carpeta principal\",\"Mr\":\"Sr\",\"Mrs\":\"Sra\",\"Name\":\"Nombre\",\"New block\":\"Nuevo bloque\",\"New contact request from\":\"Nueva petición de contacto de\",\"New contact request\":\"Nueva petición de contacto\",\"New contact\":\"Nuevo contacto\",\"New event\":\"Nuevo evento\",\"New file\":\"Nuevo archivo\",\"New folder\":\"Nouveau dossier\",\"New menu\":\"Nuevo menú\",\"New menulink\":\"Nuevo enlace de menú\",\"New news\":\"Nueva noticia\",\"New object\":\"Nuevo objeto\",\"New page section\":\"Nueva sección de página\",\"New page\":\"Nueva página\",\"New partner\":\"Nuevo socio\",\"New password\":\"Nueva contraseña\",\"New place\":\"Nuevo lugar\",\"New project category\":\"Nuevo categoría de proyectos\",\"New project\":\"Nuevo proyecto\",\"New role\":\"Nuevo rol\",\"New slide\":\"Nuevo slide\",\"New tab\":\"Nueva pestaña\",\"New tag\":\"Nueva tag\",\"New translation\":\"Nueva traducción\",\"New user\":\"Nuevo usuario\",\"News feed\":\"Feed de noticias\",\"News\":\"Noticias\",\"Next\":\"Suivant\",\"No default page found\":\"No se ha encontrado página por defecto\",\"No file\":\"Sin archivo\",\"No menu found with name “:name”\":\"No se ha encontrado un menú con el nombre “:name”.\",\"No\":\"No\",\"None\":\"No\",\"Not a member?\":\"¿No es miembro?\",\"Not found\":\"No encontrado\",\"Nothing found.\":\"No se encontró nada.\",\"Objects\":\"Objetos\",\"Offline\":\"Fuera de línea\",\"Oh no\":\"Oh no \",\"on\":\"la\",\"Online\":\"En línea\",\"Options\":\"Opciones\",\"Page Expired\":\"Página Expirada\",\"Page Not Found\":\"Página no encontrada\",\"Page sections\":\"Secciones de página\",\"Page\":\"Página\",\"Pages\":\"Páginas\",\"Partners\":\"Socios\",\"Password confirmation\":\"Confirmación de contraseña\",\"Password\":\"Contraseña\",\"Past events\":\"Eventos pasados\",\"Path\":\"Ruta\",\"per page\":\"por página\",\"Permissions\":\"Permisos\",\"Phone\":\"Teléfono\",\"Places\":\"Lugares\",\"Please click the button below to verify your email address.\":\"Por favor, haga clic en el botón de abajo para verificar su dirección de correo electrónico.\",\"Position\":\"Posición\",\"Postcode\":\"Código Postal\",\"Preview\":\"Previsualizar\",\"Previous\":\"Précédent\",\"Price\":\"Precio\",\"Private\":\"Privado\",\"Profile\":\"Perfil\",\"Project categories\":\"Categorías de proyectos\",\"Projects\":\"Proyectos\",\"Publish website\":\"Publicar sitio web\",\"Publish\":\"Publicar\",\"Published items\":\"Publicados\",\"Published on\":\"Publicada en\",\"Published\":\"Publicado\",\"Read more\":\"Leer más\",\"Redirect to first child\":\"Redireccionar al primer hijo\",\"Regards\":\"Saludos\",\"Register\":\"Registrar\",\"Registration allowed\":\"Registro permitido\",\"Remember Me\":\"Recuérdame\",\"Replace file\":\"Reemplazar archivo\",\"Replace image\":\"Reemplazar imagen\",\"Replace\":\"Reemplazar\",\"Reset Password Notification\":\"Notificación de restablecimiento de contraseña\",\"Reset Password\":\"Restablecer contraseña\",\"Reset\":\"Resetear\",\"Restricted to\":\"Restringido a\",\"Role permissions\":\"Permisos de rol\",\"Roles\":\"Roles\",\"Save and exit\":\"Guardar y salir\",\"Save this item first, then add files.\":\"Guarda este artículo primero, luego agrega archivos.\",\"Save this page first, then add sections.\":\"Guarda esta página primero, luego agrega secciones.\",\"Save\":\"Guardar\",\"Search\":\"Buscar\",\"Second\":\"Segundo\",\"Sections\":\"Secciones\",\"See history\":\"Historial\",\"See navbar\":\"Mostrar la barra de navegación\",\"See settings\":\"Mostrar la configuración\",\"Select all\":\"Seleccionar todo\",\"Send password reset link\":\"Enviar enlace de restablecimiento de contraseña\",\"Send Password Reset Link\":\"Enviar enlace para restablecer la contraseña\",\"Send\":\"Enviar\",\"Service Unavailable\":\"Servicio no disponible\",\"Settings\":\"Configuración\",\"Show categories\":\"Mostrar categorías\",\"Show on map\":\"Mostrar en el mapa\",\"Side\":\"Lado\",\"Size (px)\":\"Tamaño (px)\",\"Size\":\"Tamañao\",\"Slides\":\"Slides\",\"Slug\":\"Slug\",\"Sorry, an error occurred.\":\"Disculpe, ocurrió un error.\",\"Sorry, the page you are looking for could not be found.\":\"Lo sentimos, la página que está buscando no se pudo encontrar.\",\"Sorry, we are doing some maintenance. Please check back soon.\":\"Lo sentimos, estamos haciendo un poco de mantenimiento. Por favor, vuelva pronto.\",\"Sorry, you are forbidden from accessing this page.\":\"Lo sentimos, se le prohíbe el acceso a esta página.\",\"Sorry, you are making too many requests to our servers.\":\"Lo sentimos, estás haciendo demasiadas peticiones a nuestros servidores.\",\"Sorry, you are not authorized to access this page.\":\"Lo sentimos, no estás autorizado para acceder a esta página.\",\"Sorry, your session has expired. Please refresh and try again.\":\"Lo sentimos, tu sesión ha expirado. Por favor, actualice y vuelva a intentarlo.\",\"Sort\":\"Ordenar\",\"Start date\":\"Fecha de inicio\",\"Start time\":\"Hora de inicio\",\"Status\":\"Estado\",\"Store\":\"Guardar\",\"Submit\":\"Enviar\",\"Summary\":\"Resumen\",\"Superuser\":\"Superusuario\",\"System info\":\"Información del sistema\",\"System locales\":\"Idiomas del sistema\",\"Tag\":\"Etiqueta\",\"Tags\":\"Etiquetas\",\"Target\":\"Objetivo\",\"Template\":\"Plantilla\",\"Thank you for your contact request.\":\"Gracias por la petición de contacto.\",\"The form contains errors:\":\"El formulario contiene errores:\",\"The password is incorrect.\":\"El lema de paso es incorrecto.\",\"This action is unauthorized.\":\"Esta acción no está permitida.\",\"This item cannot be deleted because it has children.\":\"Este elemento no puede ser eliminado porque tiene hijos.\",\"This password reset link will expire in :count minutes.\":\"Este enlace de restablecimiento de contraseña caducará en :count minutos.\",\"This user is not activated.\":\"Este usuario no ha sido activado.\",\"This user was not found.\":\"Este usuario no ha sido encontrado.\",\"Time\":\"Hora\",\"Title\":\"Título\",\"to\":\"a\",\"Toggle navigation\":\"Conmutar navegación\",\"Too Many Requests\":\"Demasiadas peticiones\",\"Translation\":\"Traducción\",\"Translations\":\"Traducciones\",\"Type\":\"Tipo\",\"Unauthorized\":\"No autorizado\",\"Unpublish\":\"Despublicación\",\"Unpublished items\":\"No publicados\",\"Unpublished\":\"Inédito\",\"Upcoming events\":\"Próximos eventos\",\"Update\":\"Actualizar\",\"Upload files\":\"Enviar archivos\",\"Uri\":\"Uri\",\"Url\":\"URL\",\"User permissions\":\"Permisos de usuario\",\"User\":\"Usuario\",\"Username\":\"Nombre de usuario\",\"Users and roles\":\"Usuarios y roles\",\"Users\":\"Usuarios\",\"Uses\":\"Usos\",\"Venue\":\"Llegada\",\"Verify Email Address\":\"Confirma tu correo electrónico\",\"Verify Your Email Address\":\"Verifica tu correo electrónico\",\"View list\":\"Mostrar lista\",\"View online\":\"Ver en línea\",\"View website\":\"Ver web\",\"View\":\"Vista\",\"Webmaster Email\":\"Email del Maestro de la Web\",\"Website baseline\":\"Baseline de la web\",\"Website title\":\"Título de la web\",\"Website\":\"Sitio Web\",\"Welcome, :name!\":\"Bienvenid@ :name !\",\"Whoops!\":\"¡Vaya!\",\"Whoops, something went wrong on our servers.\":\"Vaya, algo salió mal en nuestros servidores.\",\"Width\":\"Anchura\",\"Year\":\"Año\",\"Yes\":\"Sí\",\"You are receiving this email because we received a password reset request for your account.\":\"Ha recibido este mensaje porque se solicitó un restablecimiento de contraseña para su cuenta.\",\"Your account has been activated, you can now log in\":\"Su cuenta ha sido activada, ahora puede iniciar sesión.\",\"Your account has been created, check your email for the verification link.\":\"Su cuenta ha sido creada, revise su correo electrónico para el enlace de verificación.\",\"Your account has been created, now you need to verify it.\":\"Tu cuenta ha sido creada, ahora necesita verificarla.\",\"Your email address has been verified.\":\"Su dirección de correo electrónico ha sido verificada.\"}");
+module.exports = JSON.parse("{\"# blocks\":\"Ningún bloque | 1 bloque | {count} bloques\",\"# categories\":\"Ningún categoría | 1 categoría | {count} categorías\",\"# contacts\":\"Ningún contacto | 1 contacto | {count} contactos\",\"# contactuses\":\"0 objeto|1 objeto|{count} objetos\",\"# events\":\"Ningún evento | 1 evento | {count} eventos\",\"# files could not be moved.\":\"No se han podido mover archivos. | 1 archivo no se ha podido mover. | {count} archivos no se han podido mover.\",\"# files moved.\":\"No se han movido archivos. | 1 archivo movido. | {count} archivos movidos.\",\"# items deleted\":\"1 elemento eliminado | {count} elementos eliminados\",\"# items published\":\"1 elemento publicado | {count} elementos publicados\",\"# items selected\":\"Ningún elemento seleccionado | 1 elemento seleccionado | {count} elementos seleccionados\",\"# items unpublished\":\"1 elemento no publicado | {count} elementos no publicados\",\"# menus\":\"Ningún menú | 1 menú | {count} menús\",\"# news\":\"Ningún noticia | 1 noticia | {count} noticias\",\"# pages\":\"Ningún página | 1 página | {count} páginas\",\"# pagesses\":\"0 objeto|1 objeto|{count} objetos\",\"# partners\":\"Ningún socio | 1 socio | {count} socios\",\"# places\":\"Ningún lugar | 1 lugar | {count} lugares\",\"# profiles\":\"0 objeto|1 objeto|{count} objetos\",\"# projects\":\"Ningún proyecto | 1 proyecto | {count} proyectos\",\"# roles\":\"Ningún rol | 1 rol | {count} roles\",\"# sections\":\"Ningún sección | 1 sección | {count} secciónes\",\"# slides\":\"Ningún slide | 1 slide | {count} slides\",\"# tags\":\"Ningún tag | 1 tag | {count} tags\",\"# translations\":\"Ningún traducción | 1 traducción | {count} traducciónes\",\"# users\":\"Ningún usuario | 1 usuario | {count} usuarios\",\"A fresh verification link has been sent to your email address.\":\"Se ha enviado un nuevo enlace de verificación a su correo electrónico.\",\"A non-empty folder cannot be deleted.\":\"Una carpeta no vacía no puede ser eliminada.\",\"A page containing subpages cannot be linked to a module\":\"Una página con subpáginas no puede estar relacionada con un módulo.\",\"Access dashboard\":\"Tablero de control\",\"Action\":\"Acción\",\"Activate my account\":\"Activar mi cuenta\",\"Activated\":\"Activado\",\"Active locale\":\"Idioma activo\",\"Active tab\":\"Pestaña activa\",\"Add\":\"Añadir\",\"Add files\":\"Añadir archivos\",\"Add selected file\":\"Añadir el archivo seleccionado\",\"Add selected files\":\"Añadir archivos seleccionados\",\"Add to menu\":\"Añadir al menú\",\"address\":\"direccion\",\"Address\":\"Dirección\",\"Administration Language\":\"Idioma de la administración\",\"Administration Welcome Message\":\"Administration welcome message\",\"Age\":\"Edad\",\"All\":\"Todos\",\"All languages\":\"Todos los idiomas\",\"All rights reserved.\":\"Todos los derechos reservados.\",\"Alt attribute\":\"Alt attribute\",\"An error occurred with the data fetch.\":\"Se produjo un error durante la carga de datos.\",\"and get access to all the content of our website.\":\"y acceder a todo el contenido de nuestro sitio web.\",\"Are you sure you want to delete # items?\":\"¿Seguro que quieres eliminar {count} elemento? | ¿Seguro que quieres eliminar {count} elementos?\",\"Are you sure you want to delete “{title}”?\":\"¿Estás seguro de que quieres eliminar «{title}»?\",\"Are you sure you want to publish # items?\":\"¿Seguro que quieres publicar 1 elemento? | ¿Seguro que quieres publicar {count} elementos?\",\"Are you sure you want to unpublish # items?\":\"¿Seguro que quieres anular la publicación de 1 elemento? | ¿Seguro que quieres anular la publicación de {count} elementos?\",\"Authenticate to view website\":\"Autenticarse para ver la web\",\"Available\":\"Disponible\",\"Back\":\"Volver\",\"Back to contactuses list\":\"Volver a los objetos\",\"Back to pagesses list\":\"Volver a los objetos\",\"Back to profiles list\":\"Volver a los objetos\",\"Back to the website\":\"Volver a la página web\",\"Back-office\":\"Administración\",\"Become a member\":\"Hágase miembro\",\"Before proceeding, please check your email for a verification link.\":\"Antes de continuar, por favor, confirme su correo electrónico con el enlace de verificación que le fue enviado.\",\"Blocks\":\"Bloques\",\"Body\":\"Contenido principal\",\"Cache\":\"Cache\",\"Cache cleared\":\"Cache vaciada\",\"Cancel\":\"Cancelar\",\"Categories\":\"Categorías\",\"Category\":\"Categoría\",\"Change Password\":\"Cambiar contraseña\",\"Change settings\":\"Configuración\",\"City\":\"Ciudad\",\"Class\":\"Clase\",\"Clear\":\"Limpiar historial\",\"Clear cache\":\"Vaciar cache\",\"click here to request another\":\"haga clic aquí para solicitar otro\",\"Comments enabled\":\"Comentarios habilitados\",\"Company\":\"Empresa\",\"Confirm Password\":\"Confirmar contraseña\",\"Contact information\":\"Contacto\",\"Contacts\":\"Contactos\",\"Contactuses\":\"Objetos\",\"Content\":\"Contenido\",\"Content blocks\":\"Bloques\",\"Copied to the clipboard\":\"Copiado al portapapeles\",\"Copy\":\"Copiar\",\"Country\":\"País\",\"Create\":\"Crear\",\"Created at\":\"Creado el\",\"Css\":\"CSS\",\"Currency\":\"Moneda\",\"Dashboard\":\"Tablero de control\",\"Date\":\"Fecha\",\"Day\":\"Día\",\"DDMMYYYY\":\"DD.MM.YYYY\",\"DDMMYYYY HHMM\":\"DD.MM.YYYY HH:MM\",\"Delete\":\"Borrar\",\"Description\":\"Descripción\",\"Deselect all\":\"Deseleccionar todo\",\"Destroy\":\"Borrar\",\"Disabled\":\"Discapacitado\",\"Do you want to clear history?\":\"¿Quieres borrar la historia?\",\"Document\":\"Documento\",\"Download count\":\"Número de descargas\",\"Drop files to upload\":\"Soltar archivos para subir\",\"Drop to upload.\":\"Soltar para subir.\",\"E-Mail Address\":\"Correo electrónico\",\"Edit\":\"Editar\",\"Edit block\":\"Editar el bloque\",\"Edit contactus\":\"Editar objeto\",\"Edit event\":\"Editar evento\",\"Edit file\":\"Editar archivo\",\"Edit menu\":\"Editar menú\",\"Edit menulink\":\"Editar enlace del menú\",\"Edit news\":\"Editar noticia\",\"Edit object\":\"Editar objeto\",\"Edit page\":\"Editar página\",\"Edit pagess\":\"Editar objeto\",\"Edit partner\":\"Editar socio\",\"Edit place\":\"Editar lugar\",\"Edit profile\":\"Editar objeto\",\"Edit project\":\"Editar proyecto\",\"Edit role\":\"Editar rol\",\"Edit slide\":\"Editar slide\",\"Edit tag\":\"Editar tag\",\"Edit translation\":\"Editar traducción\",\"Email\":\"Email\",\"Empty history\":\"Limpiar historial\",\"Enabled\":\"Activado\",\"End date\":\"Fecha de finalización\",\"End time\":\"Hora de finalización\",\"Enter a name for the new folder.\":\"Ingrese un nombre para la nueva carpeta.\",\"Environment\":\"Entorno\",\"Error\":\"Error \",\"Events\":\"Eventos\",\"Excerpt\":\"Extracto\",\"Exit\":\"Salir\",\"Extension\":\"Extensión\",\"Fax\":\"Fax\",\"File\":\"Archivo\",\"File information\":\"Información del archivo\",\"Filename\":\"Nombre de archivo\",\"Files\":\"Archivos\",\"Filter\":\"Filtrar\",\"Find nearest\":\"Encontrar dirección más cercana\",\"First name\":\"Nombre\",\"Forbidden\":\"Prohibido\",\"Forgot your password?\":\"¿Olvidaste tu contraseña?\",\"Forgot Your Password?\":\"¿Olvidó su contraseña?\",\"from\":\"desde\",\"Front office\":\"Front office\",\"Gender\":\"Género\",\"Generate\":\"Generar\",\"Go Home\":\"Ir a inicio\",\"Google Analytics Tracking Id\":\"Google Analytics Tracking Id\",\"Groups\":\"Grupos\",\"Height\":\"Altura\",\"Hello!\":\"¡Hola!\",\"HH:MM\":\"HH:MM\",\"hi\":\"hola\",\"History is empty.\":\"La historia está vacía.\",\"Home\":\"Inicio\",\"Homepage\":\"En página de inicio\",\"Hour\":\"Hora\",\"Icon class\":\"Clase de icono\",\"If you did not create an account, no further action is required.\":\"Si no ha creado una cuenta, no se requiere ninguna acción adicional.\",\"If you did not receive the email\":\"Si no ha recibido el correo electrónico\",\"If you did not request a password reset, no further action is required.\":\"Si no solicitó un restablecimiento de contraseña, no se requieren más acciones.\",\"If you’re having trouble clicking the \\\":actionText\\\" button, copy and paste the URL below\\ninto your web browser: [:actionURL](:actionURL)\":\"Si tiene problemas para hacer clic en el botón \\\":actionText\\\", copie y pegue la siguiente URL \\nen su navegador web: [:actionURL](:actionURL)\",\"Image\":\"Imagen\",\"Images\":\"Imágenes\",\"Impossible to delete more than # items in one go.\":\"No se pueden eliminar más de {deleteLimit} elementos de una vez.\",\"Index\":\"Listar\",\"Info\":\"Información\",\"Insert\":\"Insertar\",\"Is home\":\"Es inicio\",\"Item is published.\":\"El elemento está publicado.\",\"Item is unpublished.\":\"El elemento no está publicado.\",\"Js\":\"JavaScript\",\"KB\":\"KB\",\"Key\":\"Clave\",\"Keywords\":\"Palabras clave\",\"Lang Chooser\":\"Selector de idioma\",\"Language\":\"Idioma\",\"Last name\":\"Apellidos\",\"Latest changes\":\"Últimos cambios\",\"Latitude\":\"Latitud\",\"List\":\"Listado\",\"Loading…\":\"Cargando…\",\"Locales\":\"Idiomas\",\"Location\":\"Ubicación\",\"Login\":\"Entrar\",\"Logo\":\"Logo\",\"Logout\":\"Salir\",\"Longitude\":\"Longitud\",\"Mandatory fields\":\"Campos obligatorios\",\"Max\":\"Máximo\",\"Max :size MB\":\"Máximo :size MB\",\"MB\":\"MB\",\"Media\":\"Media\",\"Menu\":\"Menú\",\"Menulink\":\"Enlace de menú\",\"Menulinks\":\"Enlaces de menú\",\"Menus\":\"Menús\",\"Message\":\"Mensaje\",\"Meta\":\"Meta\",\"Meta description\":\"Meta description\",\"Meta keywords\":\"Meta keywords\",\"Meta title\":\"Meta title\",\"Mimetype\":\"Tipo Mime\",\"Minute\":\"Minuto\",\"Mobile\":\"Móvil\",\"Modify\":\"Modicar\",\"Module\":\"Módulo\",\"Module name\":\"Nombre del módulo\",\"Month\":\"Mes\",\"Move to parent folder\":\"Mover a la carpeta principal\",\"Mr\":\"Sr\",\"Mrs\":\"Sra\",\"Name\":\"Nombre\",\"New block\":\"Nuevo bloque\",\"New contact\":\"Nuevo contacto\",\"New contact request\":\"Nueva petición de contacto\",\"New contact request from\":\"Nueva petición de contacto de\",\"New contactus\":\"Nuevo objeto\",\"New event\":\"Nuevo evento\",\"New file\":\"Nuevo archivo\",\"New folder\":\"Nouveau dossier\",\"New menu\":\"Nuevo menú\",\"New menulink\":\"Nuevo enlace de menú\",\"New news\":\"Nueva noticia\",\"New object\":\"Nuevo objeto\",\"New page\":\"Nueva página\",\"New page section\":\"Nueva sección de página\",\"New pagess\":\"Nuevo objeto\",\"New partner\":\"Nuevo socio\",\"New password\":\"Nueva contraseña\",\"New place\":\"Nuevo lugar\",\"New profile\":\"Nuevo objeto\",\"New project\":\"Nuevo proyecto\",\"New project category\":\"Nuevo categoría de proyectos\",\"New role\":\"Nuevo rol\",\"New slide\":\"Nuevo slide\",\"New tab\":\"Nueva pestaña\",\"New tag\":\"Nueva tag\",\"New translation\":\"Nueva traducción\",\"New user\":\"Nuevo usuario\",\"News\":\"Noticias\",\"News feed\":\"Feed de noticias\",\"Next\":\"Suivant\",\"No\":\"No\",\"No default page found\":\"No se ha encontrado página por defecto\",\"No file\":\"Sin archivo\",\"No menu found with name “:name”\":\"No se ha encontrado un menú con el nombre “:name”.\",\"None\":\"No\",\"Not a member?\":\"¿No es miembro?\",\"Not found\":\"No encontrado\",\"Nothing found.\":\"No se encontró nada.\",\"Objects\":\"Objetos\",\"Offline\":\"Fuera de línea\",\"Oh no\":\"Oh no \",\"on\":\"la\",\"Online\":\"En línea\",\"Options\":\"Opciones\",\"Page\":\"Página\",\"Page Expired\":\"Página Expirada\",\"Page Not Found\":\"Página no encontrada\",\"Page sections\":\"Secciones de página\",\"Pages\":\"Páginas\",\"Pagesses\":\"Objetos\",\"Partners\":\"Socios\",\"Password\":\"Contraseña\",\"Password confirmation\":\"Confirmación de contraseña\",\"Past events\":\"Eventos pasados\",\"Path\":\"Ruta\",\"per page\":\"por página\",\"Permissions\":\"Permisos\",\"Phone\":\"Teléfono\",\"Places\":\"Lugares\",\"Please click the button below to verify your email address.\":\"Por favor, haga clic en el botón de abajo para verificar su dirección de correo electrónico.\",\"Position\":\"Posición\",\"Postcode\":\"Código Postal\",\"Preview\":\"Previsualizar\",\"Previous\":\"Précédent\",\"Price\":\"Precio\",\"Private\":\"Privado\",\"Profile\":\"Perfil\",\"Profiles\":\"Objetos\",\"Project categories\":\"Categorías de proyectos\",\"Projects\":\"Proyectos\",\"Publish\":\"Publicar\",\"Publish website\":\"Publicar sitio web\",\"Published\":\"Publicado\",\"Published items\":\"Publicados\",\"Published on\":\"Publicada en\",\"Read more\":\"Leer más\",\"Redirect to first child\":\"Redireccionar al primer hijo\",\"Regards\":\"Saludos\",\"Register\":\"Registrar\",\"Registration allowed\":\"Registro permitido\",\"Remember Me\":\"Recuérdame\",\"Replace\":\"Reemplazar\",\"Replace file\":\"Reemplazar archivo\",\"Replace image\":\"Reemplazar imagen\",\"Reset\":\"Resetear\",\"Reset Password\":\"Restablecer contraseña\",\"Reset Password Notification\":\"Notificación de restablecimiento de contraseña\",\"Restricted to\":\"Restringido a\",\"Role permissions\":\"Permisos de rol\",\"Roles\":\"Roles\",\"Save\":\"Guardar\",\"Save and exit\":\"Guardar y salir\",\"Save this item first, then add files.\":\"Guarda este artículo primero, luego agrega archivos.\",\"Save this page first, then add sections.\":\"Guarda esta página primero, luego agrega secciones.\",\"Search\":\"Buscar\",\"Second\":\"Segundo\",\"Sections\":\"Secciones\",\"See history\":\"Historial\",\"See navbar\":\"Mostrar la barra de navegación\",\"See settings\":\"Mostrar la configuración\",\"Select all\":\"Seleccionar todo\",\"Send\":\"Enviar\",\"Send Password Reset Link\":\"Enviar enlace para restablecer la contraseña\",\"Send password reset link\":\"Enviar enlace de restablecimiento de contraseña\",\"Service Unavailable\":\"Servicio no disponible\",\"Settings\":\"Configuración\",\"Show categories\":\"Mostrar categorías\",\"Show on map\":\"Mostrar en el mapa\",\"Side\":\"Lado\",\"Size\":\"Tamañao\",\"Size (px)\":\"Tamaño (px)\",\"Slides\":\"Slides\",\"Slug\":\"Slug\",\"Sorry, an error occurred.\":\"Disculpe, ocurrió un error.\",\"Sorry, the page you are looking for could not be found.\":\"Lo sentimos, la página que está buscando no se pudo encontrar.\",\"Sorry, we are doing some maintenance. Please check back soon.\":\"Lo sentimos, estamos haciendo un poco de mantenimiento. Por favor, vuelva pronto.\",\"Sorry, you are forbidden from accessing this page.\":\"Lo sentimos, se le prohíbe el acceso a esta página.\",\"Sorry, you are making too many requests to our servers.\":\"Lo sentimos, estás haciendo demasiadas peticiones a nuestros servidores.\",\"Sorry, you are not authorized to access this page.\":\"Lo sentimos, no estás autorizado para acceder a esta página.\",\"Sorry, your session has expired. Please refresh and try again.\":\"Lo sentimos, tu sesión ha expirado. Por favor, actualice y vuelva a intentarlo.\",\"Sort\":\"Ordenar\",\"Start date\":\"Fecha de inicio\",\"Start time\":\"Hora de inicio\",\"Status\":\"Estado\",\"Store\":\"Guardar\",\"Submit\":\"Enviar\",\"Summary\":\"Resumen\",\"Superuser\":\"Superusuario\",\"System info\":\"Información del sistema\",\"System locales\":\"Idiomas del sistema\",\"Tag\":\"Etiqueta\",\"Tags\":\"Etiquetas\",\"Target\":\"Objetivo\",\"Template\":\"Plantilla\",\"Thank you for your contact request.\":\"Gracias por la petición de contacto.\",\"The form contains errors:\":\"El formulario contiene errores:\",\"The password is incorrect.\":\"El lema de paso es incorrecto.\",\"This action is unauthorized.\":\"Esta acción no está permitida.\",\"This item cannot be deleted because it has children.\":\"Este elemento no puede ser eliminado porque tiene hijos.\",\"This password reset link will expire in :count minutes.\":\"Este enlace de restablecimiento de contraseña caducará en :count minutos.\",\"This user is not activated.\":\"Este usuario no ha sido activado.\",\"This user was not found.\":\"Este usuario no ha sido encontrado.\",\"Time\":\"Hora\",\"Title\":\"Título\",\"to\":\"a\",\"Toggle navigation\":\"Conmutar navegación\",\"Too Many Requests\":\"Demasiadas peticiones\",\"Translation\":\"Traducción\",\"Translations\":\"Traducciones\",\"Type\":\"Tipo\",\"Unauthorized\":\"No autorizado\",\"Unpublish\":\"Despublicación\",\"Unpublished\":\"Inédito\",\"Unpublished items\":\"No publicados\",\"Upcoming events\":\"Próximos eventos\",\"Update\":\"Actualizar\",\"Upload files\":\"Enviar archivos\",\"Uri\":\"Uri\",\"Url\":\"URL\",\"User\":\"Usuario\",\"User permissions\":\"Permisos de usuario\",\"Username\":\"Nombre de usuario\",\"Users\":\"Usuarios\",\"Users and roles\":\"Usuarios y roles\",\"Uses\":\"Usos\",\"Venue\":\"Llegada\",\"Verify Email Address\":\"Confirma tu correo electrónico\",\"Verify Your Email Address\":\"Verifica tu correo electrónico\",\"View\":\"Vista\",\"View list\":\"Mostrar lista\",\"View online\":\"Ver en línea\",\"View website\":\"Ver web\",\"Webmaster Email\":\"Email del Maestro de la Web\",\"Website\":\"Sitio Web\",\"Website baseline\":\"Baseline de la web\",\"Website title\":\"Título de la web\",\"Welcome, :name!\":\"Bienvenid@ :name !\",\"Whoops!\":\"¡Vaya!\",\"Whoops, something went wrong on our servers.\":\"Vaya, algo salió mal en nuestros servidores.\",\"Width\":\"Anchura\",\"Year\":\"Año\",\"Yes\":\"Sí\",\"You are receiving this email because we received a password reset request for your account.\":\"Ha recibido este mensaje porque se solicitó un restablecimiento de contraseña para su cuenta.\",\"Your account has been activated, you can now log in\":\"Su cuenta ha sido activada, ahora puede iniciar sesión.\",\"Your account has been created, check your email for the verification link.\":\"Su cuenta ha sido creada, revise su correo electrónico para el enlace de verificación.\",\"Your account has been created, now you need to verify it.\":\"Tu cuenta ha sido creada, ahora necesita verificarla.\",\"Your email address has been verified.\":\"Su dirección de correo electrónico ha sido verificada.\"}");
 
 /***/ }),
 
@@ -55462,11 +55460,11 @@ module.exports = JSON.parse("{\"# blocks\":\"Ningún bloque | 1 bloque | {count}
 /*!********************************!*\
   !*** ./resources/lang/fr.json ***!
   \********************************/
-/*! exports provided: # blocks, # categories, # contacts, # events, # files could not be moved., # files moved., # items deleted, # items published, # items selected, # items unpublished, # menus, # news, # pages, # partners, # places, # projects, # roles, # sections, # slides, # tags, # translations, # users, A fresh verification link has been sent to your email address., A non-empty folder cannot be deleted., A page containing subpages cannot be linked to a module, Access dashboard, Action, Activate my account, Activated, Active locale, Active tab, Add files, Add selected file, Add selected files, Add to menu, Add, address, Address, Administration Language, Administration Welcome Message, Age, All languages, All rights reserved., All, Alt attribute, An error occurred with the data fetch., and get access to all the content of our website., Are you sure you want to delete # items?, Are you sure you want to delete “{title}”?, Are you sure you want to publish # items?, Are you sure you want to unpublish # items?, Authenticate to view website, Available, Back to the website, Back, Back-office, Become a member, Before proceeding, please check your email for a verification link., Blocks, Body, Cache cleared, Cache, Cancel, Categories, Category, Change Password, Change settings, City, Class, Clear cache, Clear, click here to request another, Comments enabled, Company, Confirm Password, Contact information, Contacts, Content blocks, Content, Copied to the clipboard, Copy, Country, Create, Created at, Css, Currency, Dashboard, Date, Day, DDMMYYYY HHMM, DDMMYYYY, Delete, Description, Deselect all, Destroy, Disabled, Do you want to clear history?, Document, Download count, Drop files to upload, Drop to upload., E-Mail Address, Edit block, Edit event, Edit file, Edit menu, Edit menulink, Edit news, Edit object, Edit page, Edit partner, Edit place, Edit project, Edit role, Edit slide, Edit tag, Edit translation, Edit, Email, Empty history, En ligne/Hors ligne, Enabled, End date, End time, Enter a name for the new folder., Environment, Error, Events, Excerpt, Exit, Extension, Fax, File information, File, Filename, Files, Filter, Find nearest, First name, Forbidden, Forgot Your Password?, from, Front office, Gender, Generate, Go Home, Google Analytics Tracking Id, Grid, Groups, Height, Hello!, HH:MM, hi, History is empty., Home, Homepage, Hour, Icon class, If you did not create an account, no further action is required., If you did not receive the email, If you did not request a password reset, no further action is required., If you’re having trouble clicking the ":actionText" button, copy and paste the URL below
-into your web browser: [:actionURL](:actionURL), Image, Images, Impossible to delete more than # items in one go., Index, Info, Insert, Is home, Item is published., Item is unpublished., Js, KB, Key, Keywords, Lang Chooser, Language, Last name, Latest changes, Latitude, List, Loading…, Locales, Location, Login, Logo, Logout, Longitude, Mandatory fields, Max :size MB, Max, MB, Media, Menu, Menulink, Menulinks, Menus, Message, Meta description, Meta keywords, Meta title, Meta, Mimetype, Minute, Mobile, Modify, Module name, Module, Month, Move to parent folder, Mr, Mrs, Name, New block, New contact request from, New contact request, New contact, New event, New file, New folder, New menu, New menulink, New news, New object, New page section, New page, New partner, New password, New place, New project category, New project, New role, New slide, New tab, New tag, New translation, New user, News feed, News, Next, No default page found, No file, No menu found with name “:name”, No, None, Not a member?, Not found, Nothing found., Objects, Offline, Oh no, on, Online, Options, Page Expired, Page Not Found, Page sections, Page, Pages, Partners, Password confirmation, Password, Past events, Path, per page, Permissions, Phone, Places, Please click the button below to verify your email address., Position, Postcode, Preview, Previous, Price, Private, Profile, Project categories, Projects, Publish website, Publish, Published items, Published on, Published, Read more, Redirect to first child, Regards, Register, Registration allowed, Remember Me, Replace file, Replace image, Replace, Reset Password Notification, Reset Password, Reset, Restricted to, Role permissions, Roles, Save and exit, Save this item first, then add files., Save this page first, then add sections., Save, Search, Second, Sections, See history, See navbar, See online, See settings, Select all, Send Password Reset Link, Send, Service Unavailable, Settings, Show categories, Show on map, Side, Size (px), Size, Slides, Slug, Sorry, an error occurred., Sorry, the page you are looking for could not be found., Sorry, we are doing some maintenance. Please check back soon., Sorry, you are forbidden from accessing this page., Sorry, you are making too many requests to our servers., Sorry, you are not authorized to access this page., Sorry, your session has expired. Please refresh and try again., Sort, Start date, Start time, Status, Store, Submit, Summary, Superuser, System info, System locales, Tag, Tags, Target, Template, Thank you for your contact request., The form contains errors:, The password is incorrect., This action is unauthorized., This item cannot be deleted because it has children., This password reset link will expire in :count minutes., This user is not activated., This user was not found., Time, Title, to, Toggle navigation, Too Many Requests, Translation, Translations, Type, Unauthorized, Unpublish, Unpublished items, Unpublished, Upcoming events, Update, Upload files, Uri, Url, User permissions, User, Username, Users and roles, Users, Uses, Venue, Verify Email Address, Verify Your Email Address, View list, View online, View website, View, Webmaster Email, Website baseline, Website title, Website, Welcome, :name!, Whoops!, Whoops, something went wrong on our servers., Width, Year, Yes, You are receiving this email because we received a password reset request for your account., Your account has been activated, you can now log in, Your account has been created, check your email for the verification link., Your account has been created, now you need to verify it., Your email address has been verified., default */
+/*! exports provided: # blocks, # categories, # contacts, # contactuses, # events, # files could not be moved., # files moved., # items deleted, # items published, # items selected, # items unpublished, # menus, # news, # pages, # pagesses, # partners, # places, # profiles, # projects, # roles, # sections, # slides, # tags, # translations, # users, A fresh verification link has been sent to your email address., A non-empty folder cannot be deleted., A page containing subpages cannot be linked to a module, Access dashboard, Action, Activate my account, Activated, Active locale, Active tab, Add, Add files, Add selected file, Add selected files, Add to menu, address, Address, Administration Language, Administration Welcome Message, Age, All, All languages, All rights reserved., Alt attribute, An error occurred with the data fetch., and get access to all the content of our website., Are you sure you want to delete # items?, Are you sure you want to delete “{title}”?, Are you sure you want to publish # items?, Are you sure you want to unpublish # items?, Authenticate to view website, Available, Back, Back to contactuses list, Back to pagesses list, Back to profiles list, Back to the website, Back-office, Become a member, Before proceeding, please check your email for a verification link., Blocks, Body, Cache, Cache cleared, Cancel, Categories, Category, Change Password, Change settings, City, Class, Clear, Clear cache, click here to request another, Comments enabled, Company, Confirm Password, Contact information, Contacts, Contactuses, Content, Content blocks, Copied to the clipboard, Copy, Country, Create, Created at, Css, Currency, Dashboard, Date, Day, DDMMYYYY, DDMMYYYY HHMM, Delete, Description, Deselect all, Destroy, Disabled, Do you want to clear history?, Document, Download count, Drop files to upload, Drop to upload., E-Mail Address, Edit, Edit block, Edit contactus, Edit event, Edit file, Edit menu, Edit menulink, Edit news, Edit object, Edit page, Edit pagess, Edit partner, Edit place, Edit profile, Edit project, Edit role, Edit slide, Edit tag, Edit translation, Email, Empty history, Enabled, End date, End time, Enter a name for the new folder., Environment, Error, Events, Excerpt, Exit, Extension, Fax, File, File information, Filename, Files, Filter, Find nearest, First name, Forbidden, Forgot Your Password?, from, Front office, Gender, Generate, Go Home, Google Analytics Tracking Id, Grid, Groups, Height, Hello!, HH:MM, hi, History is empty., Home, Homepage, Hour, Icon class, If you did not create an account, no further action is required., If you did not receive the email, If you did not request a password reset, no further action is required., If you’re having trouble clicking the ":actionText" button, copy and paste the URL below
+into your web browser: [:actionURL](:actionURL), Image, Images, Impossible to delete more than # items in one go., Index, Info, Insert, Is home, Item is published., Item is unpublished., Js, KB, Key, Keywords, Lang Chooser, Language, Last name, Latest changes, Latitude, List, Loading…, Locales, Location, Login, Logo, Logout, Longitude, Mandatory fields, Max, Max :size MB, MB, Media, Menu, Menulink, Menulinks, Menus, Message, Meta, Meta description, Meta keywords, Meta title, Mimetype, Minute, Mobile, Modify, Module, Module name, Month, Move to parent folder, Mr, Mrs, Name, New block, New contact, New contact request, New contact request from, New contactus, New event, New file, New folder, New menu, New menulink, New news, New object, New page, New page section, New pagess, New partner, New password, New place, New profile, New project, New project category, New role, New slide, New tab, New tag, New translation, New user, News, News feed, Next, No, No default page found, No file, No menu found with name “:name”, None, Not a member?, Not found, Nothing found., Objects, Offline, Oh no, on, Online, Options, Page, Page Expired, Page Not Found, Page sections, Pages, Pagesses, Partners, Password, Password confirmation, Past events, Path, per page, Permissions, Phone, Places, Please click the button below to verify your email address., Position, Postcode, Preview, Previous, Price, Private, Profile, Profiles, Project categories, Projects, Publish, Publish website, Published, Published items, Published on, Read more, Redirect to first child, Regards, Register, Registration allowed, Remember Me, Replace, Replace file, Replace image, Reset, Reset Password, Reset Password Notification, Restricted to, Role permissions, Roles, Save, Save and exit, Save this item first, then add files., Save this page first, then add sections., Search, Second, Sections, See history, See navbar, See online, See settings, Select all, Send, Send Password Reset Link, Service Unavailable, Settings, Show categories, Show on map, Side, Size, Size (px), Slides, Slug, Sorry, an error occurred., Sorry, the page you are looking for could not be found., Sorry, we are doing some maintenance. Please check back soon., Sorry, you are forbidden from accessing this page., Sorry, you are making too many requests to our servers., Sorry, you are not authorized to access this page., Sorry, your session has expired. Please refresh and try again., Sort, Start date, Start time, Status, Store, Submit, Summary, Superuser, System info, System locales, Tag, Tags, Target, Template, Thank you for your contact request., The form contains errors:, The password is incorrect., This action is unauthorized., This item cannot be deleted because it has children., This password reset link will expire in :count minutes., This user is not activated., This user was not found., Time, Title, to, Toggle navigation, Too Many Requests, Translation, Translations, Type, Unauthorized, Unpublish, Unpublished, Unpublished items, Upcoming events, Update, Upload files, Uri, Url, User, User permissions, Username, Users, Users and roles, Uses, Venue, Verify Email Address, Verify Your Email Address, View, View list, View online, View website, Webmaster Email, Website, Website baseline, Website title, Welcome, :name!, Whoops!, Whoops, something went wrong on our servers., Width, Year, Yes, You are receiving this email because we received a password reset request for your account., Your account has been activated, you can now log in, Your account has been created, check your email for the verification link., Your account has been created, now you need to verify it., Your email address has been verified., default */
 /***/ (function(module) {
 
-module.exports = JSON.parse("{\"# blocks\":\"Aucun bloc de contenu | 1 bloc de contenu | {count} blocs de contenu\",\"# categories\":\"Aucune catégorie | 1 catégorie | {count} catégories\",\"# contacts\":\"Aucun contact | 1 contact | {count} contacts\",\"# events\":\"Aucun événement | 1 événement | {count} événements\",\"# files could not be moved.\":\"Aucun fichier n’a pu être déplacé. | 1 fichier n’a pas pu être déplacé. | {count} fichiers n’ont pas pu être déplacés.\",\"# files moved.\":\"Aucun fichier déplacé. | 1 fichier déplacé. | {count} fichiers déplacés.\",\"# items deleted\":\"1 élément supprimé | {count} éléments supprimés\",\"# items published\":\"1 élément publié | {count} éléments publiés\",\"# items selected\":\"Aucun élément sélectionné | 1 élément sélectionné | {count} éléments sélectionnés\",\"# items unpublished\":\"1 élément dépublié | {count} éléments dépubliés\",\"# menus\":\"Aucun menu | 1 menu | {count} menus\",\"# news\":\"Aucune actualité | 1 actualité | {count} actualités\",\"# pages\":\"Aucune page | 1 page | {count} pages\",\"# partners\":\"Aucun partenaire | 1 partenaire | {count} partenaires\",\"# places\":\"Aucune adresse | 1 adresse | {count} adresses\",\"# projects\":\"Aucun projet | 1 projet | {count} projets\",\"# roles\":\"Aucun rôle | 1 rôle | {count} rôles\",\"# sections\":\"Aucune section | 1 section | {count} sections\",\"# slides\":\"Aucun slide | 1 slide | {count} slides\",\"# tags\":\"Aucun tag | 1 tag | {count} tags\",\"# translations\":\"Aucune traduction | 1 traduction | {count} traductions\",\"# users\":\"Aucun utilisateur | 1 utilisateur | {count} utilisateurs\",\"A fresh verification link has been sent to your email address.\":\"Un nouveau lien de vérification a été envoyé à votre adresse email.\",\"A non-empty folder cannot be deleted.\":\"Un dossier non-vide ne peut pas être supprimé.\",\"A page containing subpages cannot be linked to a module\":\"Une page ayant des sous-pages ne peut pas être liée à un module.\",\"Access dashboard\":\"Accéder au tableau de bord\",\"Action\":\"Action\",\"Activate my account\":\"Activer mon compte\",\"Activated\":\"Activé\",\"Active locale\":\"Langue active\",\"Active tab\":\"Onglet actif\",\"Add files\":\"Ajouter des fichiers\",\"Add selected file\":\"Ajouter le fichier sélectionné\",\"Add selected files\":\"Ajouter les fichiers sélectionnés\",\"Add to menu\":\"Ajouter au menu\",\"Add\":\"Ajouter\",\"address\":\"adresse\",\"Address\":\"Adresse\",\"Administration Language\":\"Langue de l’interface d’administration\",\"Administration Welcome Message\":\"Message d’accueil de l’interface d’administration\",\"Age\":\"Âge\",\"All languages\":\"Toutes les langues\",\"All rights reserved.\":\"Tous droits réservés.\",\"All\":\"Tous\",\"Alt attribute\":\"Texte alternatif\",\"An error occurred with the data fetch.\":\"Une erreur s’est produite lors du chargement des données.\",\"and get access to all the content of our website.\":\"et accédez à tout le contenu de notre site.\",\"Are you sure you want to delete # items?\":\"Voulez-vous supprimer {count} élément ? | Voulez-vous supprimer {count} éléments ?\",\"Are you sure you want to delete “{title}”?\":\"Êtes-vous certain de vouloir supprimer « {title} » ?\",\"Are you sure you want to publish # items?\":\"Voulez-vous publier 1 élément ? | Voulez-vous publier {count} éléments ?\",\"Are you sure you want to unpublish # items?\":\"Voulez-vous dépublier 1 élément ? | Voulez-vous dépublier {count} éléments ?\",\"Authenticate to view website\":\"Se connecter pour voir le site\",\"Available\":\"Disponible\",\"Back to the website\":\"Retour au site web\",\"Back\":\"Retour\",\"Back-office\":\"Administration\",\"Become a member\":\"Devenez membre\",\"Before proceeding, please check your email for a verification link.\":\"Avant de continuer, veuillez vérifier votre courrier électronique pour un lien de vérification.\",\"Blocks\":\"Blocs de contenu\",\"Body\":\"Corps\",\"Cache cleared\":\"Le cache a été vidé\",\"Cache\":\"Cache\",\"Cancel\":\"Annuler\",\"Categories\":\"Catégories\",\"Category\":\"Catégorie\",\"Change Password\":\"Modifier le mot de passe\",\"Change settings\":\"Changer la configuration\",\"City\":\"Ville\",\"Class\":\"Class\",\"Clear cache\":\"Vider le cache\",\"Clear\":\"Vider l’historique\",\"click here to request another\":\"cliquer ici pour faire une autre demande\",\"Comments enabled\":\"Activer les commentaires\",\"Company\":\"Société\",\"Confirm Password\":\"Confirmez le mot de passe\",\"Contact information\":\"Coordonnées\",\"Contacts\":\"Contacts\",\"Content blocks\":\"Blocs de contenu\",\"Content\":\"Contenu\",\"Copied to the clipboard\":\"Copié dans le presse-papier\",\"Copy\":\"Copier\",\"Country\":\"Pays\",\"Create\":\"Créer\",\"Created at\":\"Créé le\",\"Css\":\"Code CSS\",\"Currency\":\"Moneda\",\"Dashboard\":\"Tableau de bord\",\"Date\":\"Date\",\"Day\":\"Jour\",\"DDMMYYYY HHMM\":\"JJ.MM.AAAA HH:MM\",\"DDMMYYYY\":\"JJ.MM.AAAA\",\"Delete\":\"Supprimer\",\"Description\":\"Description\",\"Deselect all\":\"Tout désélectionner\",\"Destroy\":\"Supprimer\",\"Disabled\":\"Désactivé\",\"Do you want to clear history?\":\"Voulez-vous vider l’historique ?\",\"Document\":\"Document\",\"Download count\":\"Nombre de téléchargements\",\"Drop files to upload\":\"Glisser des fichiers pour les envoyer.\",\"Drop to upload.\":\"Déposer pour envoyer.\",\"E-Mail Address\":\"Adresse email\",\"Edit block\":\"Modifier le bloc de contenu\",\"Edit event\":\"Modifier l’événement\",\"Edit file\":\"Modifier le fichier\",\"Edit menu\":\"Modifier le menu\",\"Edit menulink\":\"Modifier le lien de menu\",\"Edit news\":\"Modifier l’actualité\",\"Edit object\":\"Modifier object\",\"Edit page\":\"Modifier la page\",\"Edit partner\":\"Modifier le partenaire\",\"Edit place\":\"Modifier l’adresse\",\"Edit project\":\"Modifier le projet\",\"Edit role\":\"Modifier le rôle\",\"Edit slide\":\"Modifier le slide\",\"Edit tag\":\"Modifier le tag\",\"Edit translation\":\"Modifier la traduction\",\"Edit\":\"Modifier\",\"Email\":\"E-mail\",\"Empty history\":\"Vider l’historique\",\"En ligne/Hors ligne\":\"En ligne/Hors ligne\",\"Enabled\":\"Activé\",\"End date\":\"Date de fin\",\"End time\":\"Heure de fin\",\"Enter a name for the new folder.\":\"Entrez le nom du nouveau dossier.\",\"Environment\":\"Environnement\",\"Error\":\"Erreur\",\"Events\":\"Événements\",\"Excerpt\":\"Extrait\",\"Exit\":\"Sortir\",\"Extension\":\"Extension\",\"Fax\":\"Fax\",\"File information\":\"Informations sur le fichier\",\"File\":\"Fichier\",\"Filename\":\"Nom du fichier\",\"Files\":\"Fichiers\",\"Filter\":\"Filtrer\",\"Find nearest\":\"Trouver l’adresse la plus proche\",\"First name\":\"Prénom\",\"Forbidden\":\"Interdit\",\"Forgot Your Password?\":\"Vous avez oublié votre mot de passe ?\",\"from\":\"du\",\"Front office\":\"Public\",\"Gender\":\"Genre\",\"Generate\":\"Générer\",\"Go Home\":\"Aller à l’accueil\",\"Google Analytics Tracking Id\":\"Google Analytics Tracking Id\",\"Grid\":\"Grille\",\"Groups\":\"Groupes\",\"Height\":\"Hauteur\",\"Hello!\":\"Bonjour !\",\"HH:MM\":\"HH:MM\",\"hi\":\"salut\",\"History is empty.\":\"L’historique est vide.\",\"Home\":\"Accueil\",\"Homepage\":\"Sur la page d’accueil\",\"Hour\":\"Heure\",\"Icon class\":\"Class d’icône\",\"If you did not create an account, no further action is required.\":\"Si vous n’avez pas créé de compte, aucune action supplémentaire n’est requise.\",\"If you did not receive the email\":\"Si vous n’avez pas reçu l’email\",\"If you did not request a password reset, no further action is required.\":\"Si vous n’avez pas demandé de réinitialisation de mot de passe, aucune autre action n’est requise.\",\"If you’re having trouble clicking the \\\":actionText\\\" button, copy and paste the URL below\\ninto your web browser: [:actionURL](:actionURL)\":\"Si vous avez des problèmes en cliquant sur le bouton “:actionText”, faites un copié/collé de l’url ci-dessous dans votre navigateur : [:actionURL](:actionURL)\",\"Image\":\"Image\",\"Images\":\"Images\",\"Impossible to delete more than # items in one go.\":\"Impossible de supprimer plus de {deleteLimit} éléments en une fois.\",\"Index\":\"Voir liste\",\"Info\":\"Info\",\"Insert\":\"Insérer\",\"Is home\":\"Définir en tant que page d’accueil\",\"Item is published.\":\"L’élément a été publié.\",\"Item is unpublished.\":\"L’élément a été dépublié.\",\"Js\":\"Code JavaScript\",\"KB\":\"Ko\",\"Key\":\"Clé\",\"Keywords\":\"Mots-clés\",\"Lang Chooser\":\"Page de choix de langue\",\"Language\":\"Langue\",\"Last name\":\"Nom\",\"Latest changes\":\"Activité récente\",\"Latitude\":\"Latitude\",\"List\":\"Liste\",\"Loading…\":\"Chargement…\",\"Locales\":\"Langues\",\"Location\":\"Lieu\",\"Login\":\"Connexion\",\"Logo\":\"Logo\",\"Logout\":\"Déconnexion\",\"Longitude\":\"Longitude\",\"Mandatory fields\":\"Champs obligatoires\",\"Max :size MB\":\"Maximum :size Mo\",\"Max\":\"Maximum\",\"MB\":\"Mo\",\"Media\":\"Médias\",\"Menu\":\"Menu\",\"Menulink\":\"Lien de menu\",\"Menulinks\":\"Liens de menu\",\"Menus\":\"Menus\",\"Message\":\"Message\",\"Meta description\":\"Meta description\",\"Meta keywords\":\"Meta mots clés\",\"Meta title\":\"Meta titre\",\"Meta\":\"Meta\",\"Mimetype\":\"Type Mime\",\"Minute\":\"Minute\",\"Mobile\":\"Portable\",\"Modify\":\"Modifier\",\"Module name\":\"Nom du module\",\"Module\":\"Module\",\"Month\":\"Mois\",\"Move to parent folder\":\"Placer dans le dossier parent\",\"Mr\":\"M.\",\"Mrs\":\"Mme\",\"Name\":\"Nom\",\"New block\":\"Nouveau bloc de contenu\",\"New contact request from\":\"Nouvelle demande de contact de\",\"New contact request\":\"Nouvelle demande de contact\",\"New contact\":\"Nouveau contact\",\"New event\":\"Nouvel événement\",\"New file\":\"Nouveau fichier\",\"New folder\":\"Nouveau dossier\",\"New menu\":\"Nouveau menu\",\"New menulink\":\"Nouveau lien de menu\",\"New news\":\"Nouvelle actualité\",\"New object\":\"Nouveau object\",\"New page section\":\"Nouvelle section de page\",\"New page\":\"Nouvelle page\",\"New partner\":\"Nouveau partenaire\",\"New password\":\"Nouveau mot de passe\",\"New place\":\"Nouvelle adresse\",\"New project category\":\"Nouvelle catégorie de Projets\",\"New project\":\"Nouveau projet\",\"New role\":\"Nouveau rôle\",\"New slide\":\"Nouveau slide\",\"New tab\":\"Nouvel onglet\",\"New tag\":\"Nouveau tag\",\"New translation\":\"Nouvelle traduction\",\"New user\":\"Nouvel utilisateur\",\"News feed\":\"Flux d’actualités\",\"News\":\"Actualités\",\"Next\":\"Suivant\",\"No default page found\":\"Aucune page d’accueil trouvée\",\"No file\":\"Aucun fichier\",\"No menu found with name “:name”\":\"Le menu « :name » n’a pas été trouvé.\",\"No\":\"Non\",\"None\":\"Aucun\",\"Not a member?\":\"Vous n'êtes pas membre ?\",\"Not found\":\"Introuvable\",\"Nothing found.\":\"Rien n’a été trouvé.\",\"Objects\":\"Objects\",\"Offline\":\"Hors ligne\",\"Oh no\":\"Oh non\",\"on\":\"le\",\"Online\":\"En ligne\",\"Options\":\"Options\",\"Page Expired\":\"Page expirée\",\"Page Not Found\":\"Page non trouvée\",\"Page sections\":\"Sections de page\",\"Page\":\"Page\",\"Pages\":\"Pages\",\"Partners\":\"Partenaires\",\"Password confirmation\":\"Confirmer le mot de passe\",\"Password\":\"Mot de passe\",\"Past events\":\"Événements passés\",\"Path\":\"Chemin\",\"per page\":\"par page\",\"Permissions\":\"Permissions\",\"Phone\":\"Téléphone\",\"Places\":\"Adresses\",\"Please click the button below to verify your email address.\":\"Veuillez cliquer sur le bouton ci-dessous pour vérifier votre adresse email.\",\"Position\":\"Position\",\"Postcode\":\"Code postal\",\"Preview\":\"Prévisualisation\",\"Previous\":\"Précédent\",\"Price\":\"Prix\",\"Private\":\"Privée\",\"Profile\":\"Profil\",\"Project categories\":\"Catégories de projets\",\"Projects\":\"Projets\",\"Publish website\":\"Publier le site web\",\"Publish\":\"Publier\",\"Published items\":\"Publiés\",\"Published on\":\"Publié le\",\"Published\":\"Publié\",\"Read more\":\"En savoir plus\",\"Redirect to first child\":\"Rediriger vers le premier enfant\",\"Regards\":\"Cordialement\",\"Register\":\"S’inscrire\",\"Registration allowed\":\"Permettre la création de comptes utilisateurs\",\"Remember Me\":\"Se souvenir de moi\",\"Replace file\":\"Remplacer le fichier\",\"Replace image\":\"Remplacer l’image\",\"Replace\":\"Remplacer\",\"Reset Password Notification\":\"Notification de réinitialisation du mot de passe\",\"Reset Password\":\"Réinitialiser le mot de passe\",\"Reset\":\"Réinitialiser\",\"Restricted to\":\"Restreint à\",\"Role permissions\":\"Permissions du rôle\",\"Roles\":\"Rôles\",\"Save and exit\":\"Enregistrer et sortir\",\"Save this item first, then add files.\":\"Enregistrez d’abord cet élément, puis ajoutez des fichiers.\",\"Save this page first, then add sections.\":\"Enregistrez d’abord cette page, puis ajoutez des sections.\",\"Save\":\"Enregistrer\",\"Search\":\"Chercher\",\"Second\":\"Seconde\",\"Sections\":\"Sections\",\"See history\":\"Voir l’historique\",\"See navbar\":\"Voir la barre de navigation\",\"See online\":\"Voir en ligne\",\"See settings\":\"Voir la configuration\",\"Select all\":\"Tout sélectionner\",\"Send Password Reset Link\":\"Envoyer le lien de réinitialisation\",\"Send\":\"Envoyer\",\"Service Unavailable\":\"Service indisponible\",\"Settings\":\"Configuration\",\"Show categories\":\"Afficher les catégories\",\"Show on map\":\"afficher sur la carte\",\"Side\":\"Côté\",\"Size (px)\":\"Taille (px)\",\"Size\":\"Taille\",\"Slides\":\"Slides\",\"Slug\":\"Slug\",\"Sorry, an error occurred.\":\"Désolé, une erreur est survenue.\",\"Sorry, the page you are looking for could not be found.\":\"Désolé, la page que vous recherchez est introuvable.\",\"Sorry, we are doing some maintenance. Please check back soon.\":\"Désolé, nous sommes en maintenance. Veuillez revenir plus tard.\",\"Sorry, you are forbidden from accessing this page.\":\"Désolé, vous ne pouvez accéder à cette page.\",\"Sorry, you are making too many requests to our servers.\":\"Désolé, vous faites trop de requêtes vers nos serveurs.\",\"Sorry, you are not authorized to access this page.\":\"Désolé, vous n’êtes pas autorisé à accéder à cette page.\",\"Sorry, your session has expired. Please refresh and try again.\":\"Désolé, votre session a expiré. Veuillez actualiser la page et réessayer.\",\"Sort\":\"Ordonner\",\"Start date\":\"Date de début\",\"Start time\":\"Heure de début\",\"Status\":\"Statut\",\"Store\":\"Créer\",\"Submit\":\"Envoyer\",\"Summary\":\"Résumé\",\"Superuser\":\"Super utilisateur\",\"System info\":\"Informations système\",\"System locales\":\"Locales du système\",\"Tag\":\"Tag\",\"Tags\":\"Tags\",\"Target\":\"Cible\",\"Template\":\"Template\",\"Thank you for your contact request.\":\"Merci pour votre demande de contact.\",\"The form contains errors:\":\"Le formulaire contient des erreurs :\",\"The password is incorrect.\":\"Le mot de passe est incorrect.\",\"This action is unauthorized.\":\"Cette action n’est pas autorisée.\",\"This item cannot be deleted because it has children.\":\"Cet élément ne peut pas être supprimé car il a des descendants.\",\"This password reset link will expire in :count minutes.\":\"Ce lien de réinitialisation du mot de passe expirera dans :count minutes.\",\"This user is not activated.\":\"Cet utilisateur n’a pas été activé.\",\"This user was not found.\":\"Cet utilisateur n’a pas été trouvé.\",\"Time\":\"Heure\",\"Title\":\"Titre\",\"to\":\"au\",\"Toggle navigation\":\"Menu\",\"Too Many Requests\":\"Trop de requêtes\",\"Translation\":\"Traduction\",\"Translations\":\"Traductions\",\"Type\":\"Type\",\"Unauthorized\":\"Non autorisé\",\"Unpublish\":\"Dépublier\",\"Unpublished items\":\"Dépubliés\",\"Unpublished\":\"Dépublié\",\"Upcoming events\":\"Événements à venir\",\"Update\":\"Mettre à jour\",\"Upload files\":\"Envoyer des fichiers\",\"Uri\":\"URI\",\"Url\":\"URL\",\"User permissions\":\"Permissions de l’utilisateur\",\"User\":\"Utilisateur\",\"Username\":\"Pseudo\",\"Users and roles\":\"Utilisateurs et rôles\",\"Users\":\"Utilisateurs\",\"Uses\":\"Utilisations\",\"Venue\":\"Lieu\",\"Verify Email Address\":\"Vérification de l’adresse email\",\"Verify Your Email Address\":\"Vérifiez votre adresse email\",\"View list\":\"Voir la liste\",\"View online\":\"Voir en ligne\",\"View website\":\"Voir le site\",\"View\":\"Voir\",\"Webmaster Email\":\"Email du webmaster\",\"Website baseline\":\"Baseline du site\",\"Website title\":\"Titre du site\",\"Website\":\"Site web\",\"Welcome, :name!\":\"Bienvenue :name !\",\"Whoops!\":\"Oups !\",\"Whoops, something went wrong on our servers.\":\"Oups, quelque chose s’est mal passé sur nos serveurs.\",\"Width\":\"Largeur\",\"Year\":\"Année\",\"Yes\":\"Oui\",\"You are receiving this email because we received a password reset request for your account.\":\"Vous recevez cet email car nous avons reçu une demande de réinitialisation de mot de passe pour votre compte.\",\"Your account has been activated, you can now log in\":\"Votre compte a été activé, vous pouvez vous connecter.\",\"Your account has been created, check your email for the verification link.\":\"Votre compte a été créé, un lien de vérification vous a été envoyé.\",\"Your account has been created, now you need to verify it.\":\"Votre compte a été créé, vous devez maintenant le vérifier.\",\"Your email address has been verified.\":\"Votre adresse email a bien été vérifiée.\"}");
+module.exports = JSON.parse("{\"# blocks\":\"Aucun bloc de contenu | 1 bloc de contenu | {count} blocs de contenu\",\"# categories\":\"Aucune catégorie | 1 catégorie | {count} catégories\",\"# contacts\":\"Aucun contact | 1 contact | {count} contacts\",\"# contactuses\":\"Aucun contactus|1 contactus|{count} contactuses\",\"# events\":\"Aucun événement | 1 événement | {count} événements\",\"# files could not be moved.\":\"Aucun fichier n’a pu être déplacé. | 1 fichier n’a pas pu être déplacé. | {count} fichiers n’ont pas pu être déplacés.\",\"# files moved.\":\"Aucun fichier déplacé. | 1 fichier déplacé. | {count} fichiers déplacés.\",\"# items deleted\":\"1 élément supprimé | {count} éléments supprimés\",\"# items published\":\"1 élément publié | {count} éléments publiés\",\"# items selected\":\"Aucun élément sélectionné | 1 élément sélectionné | {count} éléments sélectionnés\",\"# items unpublished\":\"1 élément dépublié | {count} éléments dépubliés\",\"# menus\":\"Aucun menu | 1 menu | {count} menus\",\"# news\":\"Aucune actualité | 1 actualité | {count} actualités\",\"# pages\":\"Aucune page | 1 page | {count} pages\",\"# pagesses\":\"Aucun pagess|1 pagess|{count} pagesses\",\"# partners\":\"Aucun partenaire | 1 partenaire | {count} partenaires\",\"# places\":\"Aucune adresse | 1 adresse | {count} adresses\",\"# profiles\":\"Aucun profile|1 profile|{count} profiles\",\"# projects\":\"Aucun projet | 1 projet | {count} projets\",\"# roles\":\"Aucun rôle | 1 rôle | {count} rôles\",\"# sections\":\"Aucune section | 1 section | {count} sections\",\"# slides\":\"Aucun slide | 1 slide | {count} slides\",\"# tags\":\"Aucun tag | 1 tag | {count} tags\",\"# translations\":\"Aucune traduction | 1 traduction | {count} traductions\",\"# users\":\"Aucun utilisateur | 1 utilisateur | {count} utilisateurs\",\"A fresh verification link has been sent to your email address.\":\"Un nouveau lien de vérification a été envoyé à votre adresse email.\",\"A non-empty folder cannot be deleted.\":\"Un dossier non-vide ne peut pas être supprimé.\",\"A page containing subpages cannot be linked to a module\":\"Une page ayant des sous-pages ne peut pas être liée à un module.\",\"Access dashboard\":\"Accéder au tableau de bord\",\"Action\":\"Action\",\"Activate my account\":\"Activer mon compte\",\"Activated\":\"Activé\",\"Active locale\":\"Langue active\",\"Active tab\":\"Onglet actif\",\"Add\":\"Ajouter\",\"Add files\":\"Ajouter des fichiers\",\"Add selected file\":\"Ajouter le fichier sélectionné\",\"Add selected files\":\"Ajouter les fichiers sélectionnés\",\"Add to menu\":\"Ajouter au menu\",\"address\":\"adresse\",\"Address\":\"Adresse\",\"Administration Language\":\"Langue de l’interface d’administration\",\"Administration Welcome Message\":\"Message d’accueil de l’interface d’administration\",\"Age\":\"Âge\",\"All\":\"Tous\",\"All languages\":\"Toutes les langues\",\"All rights reserved.\":\"Tous droits réservés.\",\"Alt attribute\":\"Texte alternatif\",\"An error occurred with the data fetch.\":\"Une erreur s’est produite lors du chargement des données.\",\"and get access to all the content of our website.\":\"et accédez à tout le contenu de notre site.\",\"Are you sure you want to delete # items?\":\"Voulez-vous supprimer {count} élément ? | Voulez-vous supprimer {count} éléments ?\",\"Are you sure you want to delete “{title}”?\":\"Êtes-vous certain de vouloir supprimer « {title} » ?\",\"Are you sure you want to publish # items?\":\"Voulez-vous publier 1 élément ? | Voulez-vous publier {count} éléments ?\",\"Are you sure you want to unpublish # items?\":\"Voulez-vous dépublier 1 élément ? | Voulez-vous dépublier {count} éléments ?\",\"Authenticate to view website\":\"Se connecter pour voir le site\",\"Available\":\"Disponible\",\"Back\":\"Retour\",\"Back to contactuses list\":\"Retour à la liste des contactuses\",\"Back to pagesses list\":\"Retour à la liste des pagesses\",\"Back to profiles list\":\"Retour à la liste des profiles\",\"Back to the website\":\"Retour au site web\",\"Back-office\":\"Administration\",\"Become a member\":\"Devenez membre\",\"Before proceeding, please check your email for a verification link.\":\"Avant de continuer, veuillez vérifier votre courrier électronique pour un lien de vérification.\",\"Blocks\":\"Blocs de contenu\",\"Body\":\"Corps\",\"Cache\":\"Cache\",\"Cache cleared\":\"Le cache a été vidé\",\"Cancel\":\"Annuler\",\"Categories\":\"Catégories\",\"Category\":\"Catégorie\",\"Change Password\":\"Modifier le mot de passe\",\"Change settings\":\"Changer la configuration\",\"City\":\"Ville\",\"Class\":\"Class\",\"Clear\":\"Vider l’historique\",\"Clear cache\":\"Vider le cache\",\"click here to request another\":\"cliquer ici pour faire une autre demande\",\"Comments enabled\":\"Activer les commentaires\",\"Company\":\"Société\",\"Confirm Password\":\"Confirmez le mot de passe\",\"Contact information\":\"Coordonnées\",\"Contacts\":\"Contacts\",\"Contactuses\":\"Contactuses\",\"Content\":\"Contenu\",\"Content blocks\":\"Blocs de contenu\",\"Copied to the clipboard\":\"Copié dans le presse-papier\",\"Copy\":\"Copier\",\"Country\":\"Pays\",\"Create\":\"Créer\",\"Created at\":\"Créé le\",\"Css\":\"Code CSS\",\"Currency\":\"Moneda\",\"Dashboard\":\"Tableau de bord\",\"Date\":\"Date\",\"Day\":\"Jour\",\"DDMMYYYY\":\"JJ.MM.AAAA\",\"DDMMYYYY HHMM\":\"JJ.MM.AAAA HH:MM\",\"Delete\":\"Supprimer\",\"Description\":\"Description\",\"Deselect all\":\"Tout désélectionner\",\"Destroy\":\"Supprimer\",\"Disabled\":\"Désactivé\",\"Do you want to clear history?\":\"Voulez-vous vider l’historique ?\",\"Document\":\"Document\",\"Download count\":\"Nombre de téléchargements\",\"Drop files to upload\":\"Glisser des fichiers pour les envoyer.\",\"Drop to upload.\":\"Déposer pour envoyer.\",\"E-Mail Address\":\"Adresse email\",\"Edit\":\"Modifier\",\"Edit block\":\"Modifier le bloc de contenu\",\"Edit contactus\":\"Modifier contactus\",\"Edit event\":\"Modifier l’événement\",\"Edit file\":\"Modifier le fichier\",\"Edit menu\":\"Modifier le menu\",\"Edit menulink\":\"Modifier le lien de menu\",\"Edit news\":\"Modifier l’actualité\",\"Edit object\":\"Modifier object\",\"Edit page\":\"Modifier la page\",\"Edit pagess\":\"Modifier pagess\",\"Edit partner\":\"Modifier le partenaire\",\"Edit place\":\"Modifier l’adresse\",\"Edit profile\":\"Modifier profile\",\"Edit project\":\"Modifier le projet\",\"Edit role\":\"Modifier le rôle\",\"Edit slide\":\"Modifier le slide\",\"Edit tag\":\"Modifier le tag\",\"Edit translation\":\"Modifier la traduction\",\"Email\":\"E-mail\",\"Empty history\":\"Vider l’historique\",\"Enabled\":\"Activé\",\"End date\":\"Date de fin\",\"End time\":\"Heure de fin\",\"Enter a name for the new folder.\":\"Entrez le nom du nouveau dossier.\",\"Environment\":\"Environnement\",\"Error\":\"Erreur\",\"Events\":\"Événements\",\"Excerpt\":\"Extrait\",\"Exit\":\"Sortir\",\"Extension\":\"Extension\",\"Fax\":\"Fax\",\"File\":\"Fichier\",\"File information\":\"Informations sur le fichier\",\"Filename\":\"Nom du fichier\",\"Files\":\"Fichiers\",\"Filter\":\"Filtrer\",\"Find nearest\":\"Trouver l’adresse la plus proche\",\"First name\":\"Prénom\",\"Forbidden\":\"Interdit\",\"Forgot Your Password?\":\"Vous avez oublié votre mot de passe ?\",\"from\":\"du\",\"Front office\":\"Public\",\"Gender\":\"Genre\",\"Generate\":\"Générer\",\"Go Home\":\"Aller à l’accueil\",\"Google Analytics Tracking Id\":\"Google Analytics Tracking Id\",\"Grid\":\"Grille\",\"Groups\":\"Groupes\",\"Height\":\"Hauteur\",\"Hello!\":\"Bonjour !\",\"HH:MM\":\"HH:MM\",\"hi\":\"salut\",\"History is empty.\":\"L’historique est vide.\",\"Home\":\"Accueil\",\"Homepage\":\"Sur la page d’accueil\",\"Hour\":\"Heure\",\"Icon class\":\"Class d’icône\",\"If you did not create an account, no further action is required.\":\"Si vous n’avez pas créé de compte, aucune action supplémentaire n’est requise.\",\"If you did not receive the email\":\"Si vous n’avez pas reçu l’email\",\"If you did not request a password reset, no further action is required.\":\"Si vous n’avez pas demandé de réinitialisation de mot de passe, aucune autre action n’est requise.\",\"If you’re having trouble clicking the \\\":actionText\\\" button, copy and paste the URL below\\ninto your web browser: [:actionURL](:actionURL)\":\"Si vous avez des problèmes en cliquant sur le bouton “:actionText”, faites un copié/collé de l’url ci-dessous dans votre navigateur : [:actionURL](:actionURL)\",\"Image\":\"Image\",\"Images\":\"Images\",\"Impossible to delete more than # items in one go.\":\"Impossible de supprimer plus de {deleteLimit} éléments en une fois.\",\"Index\":\"Voir liste\",\"Info\":\"Info\",\"Insert\":\"Insérer\",\"Is home\":\"Définir en tant que page d’accueil\",\"Item is published.\":\"L’élément a été publié.\",\"Item is unpublished.\":\"L’élément a été dépublié.\",\"Js\":\"Code JavaScript\",\"KB\":\"Ko\",\"Key\":\"Clé\",\"Keywords\":\"Mots-clés\",\"Lang Chooser\":\"Page de choix de langue\",\"Language\":\"Langue\",\"Last name\":\"Nom\",\"Latest changes\":\"Activité récente\",\"Latitude\":\"Latitude\",\"List\":\"Liste\",\"Loading…\":\"Chargement…\",\"Locales\":\"Langues\",\"Location\":\"Lieu\",\"Login\":\"Connexion\",\"Logo\":\"Logo\",\"Logout\":\"Déconnexion\",\"Longitude\":\"Longitude\",\"Mandatory fields\":\"Champs obligatoires\",\"Max\":\"Maximum\",\"Max :size MB\":\"Maximum :size Mo\",\"MB\":\"Mo\",\"Media\":\"Médias\",\"Menu\":\"Menu\",\"Menulink\":\"Lien de menu\",\"Menulinks\":\"Liens de menu\",\"Menus\":\"Menus\",\"Message\":\"Message\",\"Meta\":\"Meta\",\"Meta description\":\"Meta description\",\"Meta keywords\":\"Meta mots clés\",\"Meta title\":\"Meta titre\",\"Mimetype\":\"Type Mime\",\"Minute\":\"Minute\",\"Mobile\":\"Portable\",\"Modify\":\"Modifier\",\"Module\":\"Module\",\"Module name\":\"Nom du module\",\"Month\":\"Mois\",\"Move to parent folder\":\"Placer dans le dossier parent\",\"Mr\":\"M.\",\"Mrs\":\"Mme\",\"Name\":\"Nom\",\"New block\":\"Nouveau bloc de contenu\",\"New contact\":\"Nouveau contact\",\"New contact request\":\"Nouvelle demande de contact\",\"New contact request from\":\"Nouvelle demande de contact de\",\"New contactus\":\"Nouveau contactus\",\"New event\":\"Nouvel événement\",\"New file\":\"Nouveau fichier\",\"New folder\":\"Nouveau dossier\",\"New menu\":\"Nouveau menu\",\"New menulink\":\"Nouveau lien de menu\",\"New news\":\"Nouvelle actualité\",\"New object\":\"Nouveau object\",\"New page\":\"Nouvelle page\",\"New page section\":\"Nouvelle section de page\",\"New pagess\":\"Nouveau pagess\",\"New partner\":\"Nouveau partenaire\",\"New password\":\"Nouveau mot de passe\",\"New place\":\"Nouvelle adresse\",\"New profile\":\"Nouveau profile\",\"New project\":\"Nouveau projet\",\"New project category\":\"Nouvelle catégorie de Projets\",\"New role\":\"Nouveau rôle\",\"New slide\":\"Nouveau slide\",\"New tab\":\"Nouvel onglet\",\"New tag\":\"Nouveau tag\",\"New translation\":\"Nouvelle traduction\",\"New user\":\"Nouvel utilisateur\",\"News\":\"Actualités\",\"News feed\":\"Flux d’actualités\",\"Next\":\"Suivant\",\"No\":\"Non\",\"No default page found\":\"Aucune page d’accueil trouvée\",\"No file\":\"Aucun fichier\",\"No menu found with name “:name”\":\"Le menu « :name » n’a pas été trouvé.\",\"None\":\"Aucun\",\"Not a member?\":\"Vous n'êtes pas membre ?\",\"Not found\":\"Introuvable\",\"Nothing found.\":\"Rien n’a été trouvé.\",\"Objects\":\"Objects\",\"Offline\":\"Hors ligne\",\"Oh no\":\"Oh non\",\"on\":\"le\",\"Online\":\"En ligne\",\"Options\":\"Options\",\"Page\":\"Page\",\"Page Expired\":\"Page expirée\",\"Page Not Found\":\"Page non trouvée\",\"Page sections\":\"Sections de page\",\"Pages\":\"Pages\",\"Pagesses\":\"Pagesses\",\"Partners\":\"Partenaires\",\"Password\":\"Mot de passe\",\"Password confirmation\":\"Confirmer le mot de passe\",\"Past events\":\"Événements passés\",\"Path\":\"Chemin\",\"per page\":\"par page\",\"Permissions\":\"Permissions\",\"Phone\":\"Téléphone\",\"Places\":\"Adresses\",\"Please click the button below to verify your email address.\":\"Veuillez cliquer sur le bouton ci-dessous pour vérifier votre adresse email.\",\"Position\":\"Position\",\"Postcode\":\"Code postal\",\"Preview\":\"Prévisualisation\",\"Previous\":\"Précédent\",\"Price\":\"Prix\",\"Private\":\"Privée\",\"Profile\":\"Profil\",\"Profiles\":\"Profiles\",\"Project categories\":\"Catégories de projets\",\"Projects\":\"Projets\",\"Publish\":\"Publier\",\"Publish website\":\"Publier le site web\",\"Published\":\"Publié\",\"Published items\":\"Publiés\",\"Published on\":\"Publié le\",\"Read more\":\"En savoir plus\",\"Redirect to first child\":\"Rediriger vers le premier enfant\",\"Regards\":\"Cordialement\",\"Register\":\"S’inscrire\",\"Registration allowed\":\"Permettre la création de comptes utilisateurs\",\"Remember Me\":\"Se souvenir de moi\",\"Replace\":\"Remplacer\",\"Replace file\":\"Remplacer le fichier\",\"Replace image\":\"Remplacer l’image\",\"Reset\":\"Réinitialiser\",\"Reset Password\":\"Réinitialiser le mot de passe\",\"Reset Password Notification\":\"Notification de réinitialisation du mot de passe\",\"Restricted to\":\"Restreint à\",\"Role permissions\":\"Permissions du rôle\",\"Roles\":\"Rôles\",\"Save\":\"Enregistrer\",\"Save and exit\":\"Enregistrer et sortir\",\"Save this item first, then add files.\":\"Enregistrez d’abord cet élément, puis ajoutez des fichiers.\",\"Save this page first, then add sections.\":\"Enregistrez d’abord cette page, puis ajoutez des sections.\",\"Search\":\"Chercher\",\"Second\":\"Seconde\",\"Sections\":\"Sections\",\"See history\":\"Voir l’historique\",\"See navbar\":\"Voir la barre de navigation\",\"See online\":\"Voir en ligne\",\"See settings\":\"Voir la configuration\",\"Select all\":\"Tout sélectionner\",\"Send\":\"Envoyer\",\"Send Password Reset Link\":\"Envoyer le lien de réinitialisation\",\"Service Unavailable\":\"Service indisponible\",\"Settings\":\"Configuration\",\"Show categories\":\"Afficher les catégories\",\"Show on map\":\"afficher sur la carte\",\"Side\":\"Côté\",\"Size\":\"Taille\",\"Size (px)\":\"Taille (px)\",\"Slides\":\"Slides\",\"Slug\":\"Slug\",\"Sorry, an error occurred.\":\"Désolé, une erreur est survenue.\",\"Sorry, the page you are looking for could not be found.\":\"Désolé, la page que vous recherchez est introuvable.\",\"Sorry, we are doing some maintenance. Please check back soon.\":\"Désolé, nous sommes en maintenance. Veuillez revenir plus tard.\",\"Sorry, you are forbidden from accessing this page.\":\"Désolé, vous ne pouvez accéder à cette page.\",\"Sorry, you are making too many requests to our servers.\":\"Désolé, vous faites trop de requêtes vers nos serveurs.\",\"Sorry, you are not authorized to access this page.\":\"Désolé, vous n’êtes pas autorisé à accéder à cette page.\",\"Sorry, your session has expired. Please refresh and try again.\":\"Désolé, votre session a expiré. Veuillez actualiser la page et réessayer.\",\"Sort\":\"Ordonner\",\"Start date\":\"Date de début\",\"Start time\":\"Heure de début\",\"Status\":\"Statut\",\"Store\":\"Créer\",\"Submit\":\"Envoyer\",\"Summary\":\"Résumé\",\"Superuser\":\"Super utilisateur\",\"System info\":\"Informations système\",\"System locales\":\"Locales du système\",\"Tag\":\"Tag\",\"Tags\":\"Tags\",\"Target\":\"Cible\",\"Template\":\"Template\",\"Thank you for your contact request.\":\"Merci pour votre demande de contact.\",\"The form contains errors:\":\"Le formulaire contient des erreurs :\",\"The password is incorrect.\":\"Le mot de passe est incorrect.\",\"This action is unauthorized.\":\"Cette action n’est pas autorisée.\",\"This item cannot be deleted because it has children.\":\"Cet élément ne peut pas être supprimé car il a des descendants.\",\"This password reset link will expire in :count minutes.\":\"Ce lien de réinitialisation du mot de passe expirera dans :count minutes.\",\"This user is not activated.\":\"Cet utilisateur n’a pas été activé.\",\"This user was not found.\":\"Cet utilisateur n’a pas été trouvé.\",\"Time\":\"Heure\",\"Title\":\"Titre\",\"to\":\"au\",\"Toggle navigation\":\"Menu\",\"Too Many Requests\":\"Trop de requêtes\",\"Translation\":\"Traduction\",\"Translations\":\"Traductions\",\"Type\":\"Type\",\"Unauthorized\":\"Non autorisé\",\"Unpublish\":\"Dépublier\",\"Unpublished\":\"Dépublié\",\"Unpublished items\":\"Dépubliés\",\"Upcoming events\":\"Événements à venir\",\"Update\":\"Mettre à jour\",\"Upload files\":\"Envoyer des fichiers\",\"Uri\":\"URI\",\"Url\":\"URL\",\"User\":\"Utilisateur\",\"User permissions\":\"Permissions de l’utilisateur\",\"Username\":\"Pseudo\",\"Users\":\"Utilisateurs\",\"Users and roles\":\"Utilisateurs et rôles\",\"Uses\":\"Utilisations\",\"Venue\":\"Lieu\",\"Verify Email Address\":\"Vérification de l’adresse email\",\"Verify Your Email Address\":\"Vérifiez votre adresse email\",\"View\":\"Voir\",\"View list\":\"Voir la liste\",\"View online\":\"Voir en ligne\",\"View website\":\"Voir le site\",\"Webmaster Email\":\"Email du webmaster\",\"Website\":\"Site web\",\"Website baseline\":\"Baseline du site\",\"Website title\":\"Titre du site\",\"Welcome, :name!\":\"Bienvenue :name !\",\"Whoops!\":\"Oups !\",\"Whoops, something went wrong on our servers.\":\"Oups, quelque chose s’est mal passé sur nos serveurs.\",\"Width\":\"Largeur\",\"Year\":\"Année\",\"Yes\":\"Oui\",\"You are receiving this email because we received a password reset request for your account.\":\"Vous recevez cet email car nous avons reçu une demande de réinitialisation de mot de passe pour votre compte.\",\"Your account has been activated, you can now log in\":\"Votre compte a été activé, vous pouvez vous connecter.\",\"Your account has been created, check your email for the verification link.\":\"Votre compte a été créé, un lien de vérification vous a été envoyé.\",\"Your account has been created, now you need to verify it.\":\"Votre compte a été créé, vous devez maintenant le vérifier.\",\"Your email address has been verified.\":\"Votre adresse email a bien été vérifiée.\"}");
 
 /***/ }),
 
@@ -55499,9 +55497,9 @@ module.exports = JSON.parse("{\"# blocks\":\"Aucun bloc de contenu | 1 bloc de c
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-__webpack_require__(/*! /Users/samueldebacker/Sites/typicms/resources/js/admin.js */"./resources/js/admin.js");
-__webpack_require__(/*! /Users/samueldebacker/Sites/typicms/resources/scss/admin.scss */"./resources/scss/admin.scss");
-module.exports = __webpack_require__(/*! /Users/samueldebacker/Sites/typicms/resources/scss/public.scss */"./resources/scss/public.scss");
+__webpack_require__(/*! /home/vagrant/project_files/learning/typicms_tests/resources/js/admin.js */"./resources/js/admin.js");
+__webpack_require__(/*! /home/vagrant/project_files/learning/typicms_tests/resources/scss/admin.scss */"./resources/scss/admin.scss");
+module.exports = __webpack_require__(/*! /home/vagrant/project_files/learning/typicms_tests/resources/scss/public.scss */"./resources/scss/public.scss");
 
 
 /***/ })
